@@ -2,7 +2,11 @@ import sqlite3
 from contextlib import contextmanager
 import os
 
-DATABASE_PATH = os.path.join(os.path.dirname(__file__), '..', 'attendance_system.sqlite')
+# Store the database in a data/ folder at the project root
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DATA_DIR = os.path.join(BASE_DIR, 'data')
+os.makedirs(DATA_DIR, exist_ok=True)  # Create data/ folder if it doesn't exist
+DATABASE_PATH = os.path.join(DATA_DIR, 'attendance_system.sqlite')
 
 @contextmanager
 def get_db_connection():
@@ -25,7 +29,7 @@ def initialize_database():
         
         # Create students table
         cursor.execute("""
-            CREATE TABLE students (
+            CREATE TABLE IF NOT EXISTS students (
                 student_id INTEGER PRIMARY KEY AUTOINCREMENT,
                 student_admin_number VARCHAR(10) UNIQUE NOT NULL,
                 student_full_name VARCHAR(512) NOT NULL,
@@ -35,7 +39,7 @@ def initialize_database():
         
         # Create face embedding table
         cursor.execute("""
-            CREATE TABLE face_embedding (
+            CREATE TABLE IF NOT EXISTS face_embedding (
                 embedding_id INTEGER PRIMARY KEY AUTOINCREMENT,
                 embedding_student_id INTEGER,
                 embedding_data TEXT NOT NULL,

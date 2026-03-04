@@ -1,9 +1,15 @@
-from fastapi import FastAPI, HTTPException
+import os
+import shutil
+from fastapi import FastAPI, HTTPException, File, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime, date
 from app.database import get_db_connection
+
+# Ensure images directory exists
+IMAGES_DIR = os.path.join(os.path.dirname(__file__), 'images')
+os.makedirs(IMAGES_DIR, exist_ok=True)
 
 app = FastAPI(title="Attendance System API", version="1.0.0")
 
@@ -27,10 +33,6 @@ class StudentUpdate(BaseModel):
     student_admin_number: Optional[str] = None
     student_full_name: Optional[str] = None
     student_course: Optional[str] = None
-
-class FaceEmbeddingCreate(BaseModel):
-    embedding_student_id: int
-    embedding_data: str
 
 class ExamCreate(BaseModel):
     exam_name: str
@@ -169,21 +171,43 @@ def get_embedding_by_student(student_id: int):
         return {"embedding": dict(embedding)}
 
 @app.post("/api/embeddings", status_code=201)
-def create_embedding(embedding: FaceEmbeddingCreate):
-    """Create a face embedding for a student"""
+async def create_embedding(
+    embedding_student_id: int = Form(...),
+    image: UploadFile = File(...)
+):
+    """Upload a student face image and save it to app/images/"""
+    # Validate file is an image
+    if not image.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="File must be an image")
+
+    # Save image as {student_id}_{original_filename}
+    ext = os.path.splitext(image.filename)[1]
+    filename = f"{embedding_student_id}{ext}"
+    file_path = os.path.join(IMAGES_DIR, filename)
+
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(image.file, buffer)
+
+    # Store relative image path in embedding_data
+    relative_path = f"app/images/{filename}"
+
     with get_db_connection() as conn:
         cursor = conn.cursor()
         try:
             cursor.execute(
                 "INSERT INTO face_embedding (embedding_student_id, embedding_data) VALUES (?, ?)",
-                (embedding.embedding_student_id, embedding.embedding_data)
+                (embedding_student_id, relative_path)
             )
             embedding_id = cursor.lastrowid
             return {
                 "embedding_id": embedding_id,
-                "embedding_student_id": embedding.embedding_student_id
+                "embedding_student_id": embedding_student_id,
+                "image_path": relative_path
             }
         except Exception as e:
+            # Remove saved file if DB insert fails
+            if os.path.exists(file_path):
+                os.remove(file_path)
             raise HTTPException(status_code=400, detail=str(e))
 
 @app.delete("/api/embeddings/{embedding_id}")
