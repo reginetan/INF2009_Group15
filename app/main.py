@@ -130,13 +130,27 @@ def update_student(student_id: int, student: StudentUpdate):
 
 @app.delete("/api/students/{student_id}")
 def delete_student(student_id: int):
-    """Delete a student"""
+    """Delete a student and their associated image files"""
     with get_db_connection() as conn:
         cursor = conn.cursor()
+
+        # Fetch image paths before cascade delete removes them
+        cursor.execute(
+            "SELECT embedding_data FROM face_embedding WHERE embedding_student_id = ?",
+            (student_id,)
+        )
+        image_paths = [row["embedding_data"] for row in cursor.fetchall()]
+
         cursor.execute("DELETE FROM students WHERE student_id = ?", (student_id,))
 
         if cursor.rowcount == 0:
             raise HTTPException(status_code=404, detail="Student not found")
+
+        # Remove image files from disk
+        for image_path in image_paths:
+            abs_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), image_path)
+            if os.path.exists(abs_path):
+                os.remove(abs_path)
 
         return {"message": "Student deleted successfully"}
 
@@ -212,13 +226,27 @@ async def create_embedding(
 
 @app.delete("/api/embeddings/{embedding_id}")
 def delete_embedding(embedding_id: int):
-    """Delete a face embedding"""
+    """Delete a face embedding and its associated image file"""
     with get_db_connection() as conn:
         cursor = conn.cursor()
+
+        # Fetch image path before deleting
+        cursor.execute(
+            "SELECT embedding_data FROM face_embedding WHERE embedding_id = ?",
+            (embedding_id,)
+        )
+        row = cursor.fetchone()
+
+        if not row:
+            raise HTTPException(status_code=404, detail="Face embedding not found")
+
+        image_path = row["embedding_data"]
         cursor.execute("DELETE FROM face_embedding WHERE embedding_id = ?", (embedding_id,))
 
-        if cursor.rowcount == 0:
-            raise HTTPException(status_code=404, detail="Face embedding not found")
+        # Remove image file from disk
+        abs_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), image_path)
+        if os.path.exists(abs_path):
+            os.remove(abs_path)
 
         return {"message": "Face embedding deleted successfully"}
 
