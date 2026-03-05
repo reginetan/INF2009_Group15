@@ -1,4 +1,6 @@
-#!/home/student/INF2009_Group15/venv/bin/python3
+#!/bin/sh
+'''exec' "/Users/regine/iCloud Drive (Archive)/Desktop/SIT/Year 3/3.2/Edge Computing/INF2009_Group15/venv/bin/python3.11" "$0" "$@"
+' '''
 # -*- coding: utf-8 -*-
 import re
 import sys

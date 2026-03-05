@@ -1,11 +1,25 @@
 import os
 import shutil
-from fastapi import FastAPI, HTTPException, File, UploadFile, Form
+from fastapi import FastAPI, HTTPException, File, UploadFile, Form, Security, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import APIKeyHeader
 from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime, date
+from dotenv import load_dotenv
 from app.database import get_db_connection
+
+load_dotenv()
+
+# ==================== API KEY SECURITY ====================
+API_KEY = os.environ.get("API_KEY", "changeme")
+api_key_header = APIKeyHeader(name="X-API-Key")
+
+def verify_api_key(key: str = Security(api_key_header)):
+    if key != API_KEY:
+        raise HTTPException(status_code=403, detail="Invalid API Key")
+    return key
+
 
 # Ensure images directory exists
 IMAGES_DIR = os.path.join(os.path.dirname(__file__), 'images')
@@ -56,7 +70,7 @@ class AttendanceUpdate(BaseModel):
 
 # ==================== STUDENT ENDPOINTS ====================
 
-@app.get("/api/students")
+@app.get("/api/students", dependencies=[Depends(verify_api_key)])
 def get_students():
     """Get all students"""
     with get_db_connection() as conn:
@@ -65,7 +79,8 @@ def get_students():
         students = [dict(row) for row in cursor.fetchall()]
         return {"students": students}
 
-@app.get("/api/students/{student_id}")
+@app.get("/api/students/{student_id}", dependencies=[Depends(verify_api_key)]
+         )
 def get_student(student_id: int):
     """Get student by ID"""
     with get_db_connection() as conn:
@@ -78,7 +93,7 @@ def get_student(student_id: int):
 
         return {"student": dict(student)}
 
-@app.post("/api/students", status_code=201)
+@app.post("/api/students", status_code=201, dependencies=[Depends(verify_api_key)])
 def create_student(student: StudentCreate):
     """Create a new student"""
     with get_db_connection() as conn:
@@ -98,7 +113,7 @@ def create_student(student: StudentCreate):
         except Exception as e:
             raise HTTPException(status_code=400, detail=str(e))
 
-@app.put("/api/students/{student_id}")
+@app.put("/api/students/{student_id}", dependencies=[Depends(verify_api_key)])
 def update_student(student_id: int, student: StudentUpdate):
     """Update a student"""
     with get_db_connection() as conn:
@@ -128,7 +143,7 @@ def update_student(student_id: int, student: StudentUpdate):
 
         return {"message": "Student updated successfully"}
 
-@app.delete("/api/students/{student_id}")
+@app.delete("/api/students/{student_id}", dependencies=[Depends(verify_api_key)])
 def delete_student(student_id: int):
     """Delete a student and their associated image files"""
     with get_db_connection() as conn:
@@ -156,7 +171,7 @@ def delete_student(student_id: int):
 
 # ==================== FACE EMBEDDING ENDPOINTS ====================
 
-@app.get("/api/embeddings")
+@app.get("/api/embeddings", dependencies=[Depends(verify_api_key)])
 def get_embeddings():
     """Get all face embeddings"""
     with get_db_connection() as conn:
@@ -169,7 +184,7 @@ def get_embeddings():
         embeddings = [dict(row) for row in cursor.fetchall()]
         return {"embeddings": embeddings}
 
-@app.get("/api/embeddings/{student_id}")
+@app.get("/api/embeddings/{student_id}", dependencies=[Depends(verify_api_key)])
 def get_embedding_by_student(student_id: int):
     """Get face embedding by student ID"""
     with get_db_connection() as conn:
@@ -184,7 +199,7 @@ def get_embedding_by_student(student_id: int):
 
         return {"embedding": dict(embedding)}
 
-@app.post("/api/embeddings", status_code=201)
+@app.post("/api/embeddings", status_code=201, dependencies=[Depends(verify_api_key)])
 async def create_embedding(
     embedding_student_id: int = Form(...),
     image: UploadFile = File(...)
@@ -224,7 +239,7 @@ async def create_embedding(
                 os.remove(file_path)
             raise HTTPException(status_code=400, detail=str(e))
 
-@app.delete("/api/embeddings/{embedding_id}")
+@app.delete("/api/embeddings/{embedding_id}", dependencies=[Depends(verify_api_key)])
 def delete_embedding(embedding_id: int):
     """Delete a face embedding and its associated image file"""
     with get_db_connection() as conn:
@@ -252,7 +267,7 @@ def delete_embedding(embedding_id: int):
 
 # ==================== EXAM ENDPOINTS ====================
 
-@app.get("/api/exams")
+@app.get("/api/exams", dependencies=[Depends(verify_api_key)])
 def get_exams():
     """Get all exams"""
     with get_db_connection() as conn:
@@ -261,7 +276,7 @@ def get_exams():
         exams = [dict(row) for row in cursor.fetchall()]
         return {"exams": exams}
 
-@app.get("/api/exams/{exam_id}")
+@app.get("/api/exams/{exam_id}", dependencies=[Depends(verify_api_key)])
 def get_exam(exam_id: int):
     """Get exam by ID"""
     with get_db_connection() as conn:
@@ -274,7 +289,7 @@ def get_exam(exam_id: int):
 
         return {"exam": dict(exam)}
 
-@app.post("/api/exams", status_code=201)
+@app.post("/api/exams", status_code=201, dependencies=[Depends(verify_api_key)])
 def create_exam(exam: ExamCreate):
     """Create a new exam"""
     with get_db_connection() as conn:
@@ -295,7 +310,7 @@ def create_exam(exam: ExamCreate):
         except Exception as e:
             raise HTTPException(status_code=400, detail=str(e))
 
-@app.put("/api/exams/{exam_id}")
+@app.put("/api/exams/{exam_id}", dependencies=[Depends(verify_api_key)])
 def update_exam(exam_id: int, exam: ExamUpdate):
     """Update an exam"""
     with get_db_connection() as conn:
@@ -328,7 +343,7 @@ def update_exam(exam_id: int, exam: ExamUpdate):
 
         return {"message": "Exam updated successfully"}
 
-@app.delete("/api/exams/{exam_id}")
+@app.delete("/api/exams/{exam_id}", dependencies=[Depends(verify_api_key)])
 def delete_exam(exam_id: int):
     """Delete an exam"""
     with get_db_connection() as conn:
@@ -342,7 +357,7 @@ def delete_exam(exam_id: int):
 
 # ==================== ATTENDANCE ENDPOINTS ====================
 
-@app.get("/api/attendance")
+@app.get("/api/attendance", dependencies=[Depends(verify_api_key)])
 def get_attendance():
     """Get all attendance records with student and exam details"""
     with get_db_connection() as conn:
@@ -361,7 +376,7 @@ def get_attendance():
         records = [dict(row) for row in cursor.fetchall()]
         return {"attendance": records}
 
-@app.get("/api/attendance/exam/{exam_id}")
+@app.get("/api/attendance/exam/{exam_id}", dependencies=[Depends(verify_api_key)])
 def get_attendance_by_exam(exam_id: int):
     """Get attendance records for a specific exam"""
     with get_db_connection() as conn:
@@ -377,7 +392,7 @@ def get_attendance_by_exam(exam_id: int):
         records = [dict(row) for row in cursor.fetchall()]
         return {"attendance": records}
 
-@app.get("/api/attendance/student/{student_id}")
+@app.get("/api/attendance/student/{student_id}", dependencies=[Depends(verify_api_key)])
 def get_attendance_by_student(student_id: int):
     """Get attendance records for a specific student"""
     with get_db_connection() as conn:
@@ -394,7 +409,7 @@ def get_attendance_by_student(student_id: int):
         records = [dict(row) for row in cursor.fetchall()]
         return {"attendance": records}
 
-@app.post("/api/attendance", status_code=201)
+@app.post("/api/attendance", status_code=201, dependencies=[Depends(verify_api_key)])
 def create_attendance(record: AttendanceCreate):
     """Create an attendance record"""
     with get_db_connection() as conn:
@@ -414,7 +429,7 @@ def create_attendance(record: AttendanceCreate):
         except Exception as e:
             raise HTTPException(status_code=400, detail=str(e))
 
-@app.put("/api/attendance/{attendance_id}")
+@app.put("/api/attendance/{attendance_id}", dependencies=[Depends(verify_api_key)])
 def update_attendance(attendance_id: int, record: AttendanceUpdate):
     """Update an attendance record's status"""
     with get_db_connection() as conn:
@@ -429,7 +444,7 @@ def update_attendance(attendance_id: int, record: AttendanceUpdate):
 
         return {"message": "Attendance updated successfully"}
 
-@app.delete("/api/attendance/{attendance_id}")
+@app.delete("/api/attendance/{attendance_id}", dependencies=[Depends(verify_api_key)])
 def delete_attendance(attendance_id: int):
     """Delete an attendance record"""
     with get_db_connection() as conn:
@@ -450,3 +465,9 @@ def health_check():
         "status": "OK",
         "timestamp": datetime.now().isoformat()
     }
+    
+
+@app.get("/")
+def root():
+    return {"message": "Attendance System API is running", "docs": "/docs"}
+
