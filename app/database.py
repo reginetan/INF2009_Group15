@@ -1,19 +1,18 @@
+import os
 import sqlite3
 from contextlib import contextmanager
-import os
 
-# Store the database in a data/ folder at the project root
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(BASE_DIR, 'data')
-os.makedirs(DATA_DIR, exist_ok=True)  # Create data/ folder if it doesn't exist
+os.makedirs(DATA_DIR, exist_ok=True)
 DATABASE_PATH = os.path.join(DATA_DIR, 'attendance_system.sqlite')
 
 @contextmanager
 def get_db_connection():
     """Context manager for database connections"""
     conn = sqlite3.connect(DATABASE_PATH)
-    conn.row_factory = sqlite3.Row  # Return rows as dictionaries
-    conn.execute("PRAGMA foreign_keys = ON")  # Enable foreign key enforcement + CASCADE
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
     try:
         yield conn
         conn.commit()
