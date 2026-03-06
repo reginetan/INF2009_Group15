@@ -336,7 +336,7 @@
       </div>
       <div class="header-right">
         <span id="clock">--:--:--</span>
-        <span><span class="refresh-dot"></span> auto-refresh 10s</span>
+        <span><span class="refresh-dot"></span> auto-refresh 1s</span>
       </div>
     </header>
 
@@ -633,9 +633,9 @@
           fetchExams();
         }
 
-        // Initial load + auto-refresh every 10 seconds
+        // Initial load + auto-refresh every 1 second
         refreshAll();
-        setInterval(refreshAll, 10000);
+        setInterval(refreshAll, 1000);
       })();
     </script>
   </body>
