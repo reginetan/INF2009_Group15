@@ -182,17 +182,20 @@ class FaceRecogniser:
             return net
 
     @staticmethod
-    def _preprocess(face_img: np.ndarray) -> np.ndarray:
+    def _preprocess_raw(face_img: np.ndarray) -> np.ndarray:
         resized = cv2.resize(face_img, MODEL_INPUT_SIZE)
         rgb     = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB).astype(np.float32)
         rgb     = (rgb - 127.5) / 128.0
         nchw    = np.transpose(rgb, (2, 0, 1))
         return np.expand_dims(nchw, axis=0)
 
-    def get_embedding(self, face_img: np.ndarray):
-        if self._session is None:
-            return None
-        blob = self._preprocess(face_img)
+    @staticmethod
+    def _preprocess_normed(face_norm: np.ndarray) -> np.ndarray:
+        rgb  = cv2.cvtColor(face_norm, cv2.COLOR_BGR2RGB) if face_norm.shape[2] == 3 else face_norm
+        nchw = np.transpose(rgb, (2, 0, 1))
+        return np.expand_dims(nchw.astype(np.float32), axis=0)
+
+    def _run_model(self, blob: np.ndarray) -> np.ndarray:
         if ONNX_AVAILABLE:
             input_name = self._session.get_inputs()[0].name
             raw = self._session.run(None, {input_name: blob})[0][0]
@@ -202,13 +205,53 @@ class FaceRecogniser:
         norm = np.linalg.norm(raw)
         return (raw / norm) if norm > 0 else raw
 
+    def get_embedding_from_raw(self, face_img: np.ndarray):
+        if self._session is None:
+            return None
+        blob = self._preprocess_raw(face_img)
+        return self._run_model(blob)
+
+    def get_embedding_from_normed(self, face_norm: np.ndarray):
+        if self._session is None:
+            return None
+        blob = self._preprocess_normed(face_norm)
+        return self._run_model(blob)
+
     @staticmethod
     def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
         return float(np.dot(a, b))
 
+    def identify_from_t2(self, t2_result: dict) -> dict:
+        t0 = time.perf_counter()
+        face_crop = t2_result["face_crop"]
+        embedding = self.get_embedding_from_normed(face_crop)
+        if embedding is None:
+            return _no_match(0.0)
+
+        best_id, best_name, best_score = self.db.find_best_match(embedding, self.cosine_similarity)
+        latency_ms = (time.perf_counter() - t0) * 1000
+
+        if best_score >= self.threshold:
+            log.info("MATCH -> %s (%s) | score=%.3f | %.1f ms", best_id, best_name, best_score, latency_ms)
+            return {
+                "match":      True,
+                "student_id": best_id,
+                "name":       best_name,
+                "confidence": round(best_score, 4),
+                "latency_ms": round(latency_ms, 2),
+                "direction":  t2_result.get("direction"),
+                "bbox":       t2_result.get("bbox"),
+            }
+        else:
+            log.info("NO MATCH | best=%.3f < %.2f | %.1f ms", best_score, self.threshold, latency_ms)
+            result = _no_match(best_score, latency_ms)
+            result["direction"] = t2_result.get("direction")
+            result["bbox"]      = t2_result.get("bbox")
+            return result
+
     def identify(self, face_img: np.ndarray) -> dict:
         t0 = time.perf_counter()
-        embedding = self.get_embedding(face_img)
+        embedding = self.get_embedding_from_raw(face_img)
         if embedding is None:
             return _no_match(0.0)
         best_id, best_name, best_score = self.db.find_best_match(embedding, self.cosine_similarity)
@@ -229,7 +272,7 @@ class FaceRecogniser:
             log.error("Enrollment failed: no face detected.")
             return False
         crop = self.detector.crop_face(image, faces[0])
-        embedding = self.get_embedding(crop)
+        embedding = self.get_embedding_from_raw(crop)
         if embedding is None:
             return False
         self.db.add(student_id, name, embedding)
