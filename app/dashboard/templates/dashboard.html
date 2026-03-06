@@ -1,522 +1,642 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Attendance Dashboard — INF2009 Team 15</title>
-<style>
-/* ── Reset & Base ─────────────────────────────────────────── */
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Attendance Dashboard — INF2009 Team 15</title>
+    <style>
+      /* ── Reset & Base ─────────────────────────────────────────── */
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
 
-:root {
-    --bg:        #0e0e10;
-    --surface:   #18181b;
-    --border:    #2a2a2e;
-    --text:      #e4e4e7;
-    --muted:     #71717a;
-    --accent:    #3b82f6;
-    --green:     #22c55e;
-    --red:       #ef4444;
-    --orange:    #f59e0b;
-    --cyan:      #06b6d4;
-    --mono:      'SF Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
-    --sans:      -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-}
+      :root {
+        --bg: #0e0e10;
+        --surface: #18181b;
+        --border: #2a2a2e;
+        --text: #e4e4e7;
+        --muted: #71717a;
+        --accent: #3b82f6;
+        --green: #22c55e;
+        --red: #ef4444;
+        --orange: #f59e0b;
+        --cyan: #06b6d4;
+        --mono: "SF Mono", "Fira Code", "Cascadia Code", "Consolas", monospace;
+        --sans:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      }
 
-body {
-    font-family: var(--sans);
-    background: var(--bg);
-    color: var(--text);
-    line-height: 1.6;
-    min-height: 100vh;
-}
+      body {
+        font-family: var(--sans);
+        background: var(--bg);
+        color: var(--text);
+        line-height: 1.6;
+        min-height: 100vh;
+      }
 
-/* ── Header ───────────────────────────────────────────────── */
-.header {
-    background: var(--surface);
-    border-bottom: 1px solid var(--border);
-    padding: 14px 24px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    position: sticky;
-    top: 0;
-    z-index: 100;
-}
+      /* ── Header ───────────────────────────────────────────────── */
+      .header {
+        background: var(--surface);
+        border-bottom: 1px solid var(--border);
+        padding: 14px 24px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        position: sticky;
+        top: 0;
+        z-index: 100;
+      }
 
-.header-left { display: flex; align-items: center; gap: 16px; }
+      .header-left {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+      }
 
-.header h1 {
-    font-family: var(--mono);
-    font-size: 16px;
-    font-weight: 600;
-    letter-spacing: 0.5px;
-    color: var(--text);
-}
+      .header h1 {
+        font-family: var(--mono);
+        font-size: 16px;
+        font-weight: 600;
+        letter-spacing: 0.5px;
+        color: var(--text);
+      }
 
-.header-tag {
-    font-family: var(--mono);
-    font-size: 11px;
-    background: var(--accent);
-    color: #fff;
-    padding: 2px 8px;
-    border-radius: 3px;
-    font-weight: 600;
-}
+      .header-tag {
+        font-family: var(--mono);
+        font-size: 11px;
+        background: var(--accent);
+        color: #fff;
+        padding: 2px 8px;
+        border-radius: 3px;
+        font-weight: 600;
+      }
 
-.header-right {
-    display: flex;
-    align-items: center;
-    gap: 18px;
-    font-family: var(--mono);
-    font-size: 13px;
-    color: var(--muted);
-}
+      .header-right {
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        font-family: var(--mono);
+        font-size: 13px;
+        color: var(--muted);
+      }
 
-.refresh-dot {
-    width: 8px;
-    height: 8px;
-    background: var(--green);
-    border-radius: 50%;
-    display: inline-block;
-    animation: pulse 2s ease-in-out infinite;
-}
+      .refresh-dot {
+        width: 8px;
+        height: 8px;
+        background: var(--green);
+        border-radius: 50%;
+        display: inline-block;
+        animation: pulse 2s ease-in-out infinite;
+      }
 
-@keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.3; }
-}
+      @keyframes pulse {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.3;
+        }
+      }
 
-/* ── Container ────────────────────────────────────────────── */
-.container { max-width: 1280px; margin: 0 auto; padding: 24px; }
+      /* ── Container ────────────────────────────────────────────── */
+      .container {
+        max-width: 1280px;
+        margin: 0 auto;
+        padding: 24px;
+      }
 
-/* ── Stat Cards ───────────────────────────────────────────── */
-.stats-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: 16px;
-    margin-bottom: 24px;
-}
+      /* ── Stat Cards ───────────────────────────────────────────── */
+      .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 16px;
+        margin-bottom: 24px;
+      }
 
-.stat-card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 20px;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-}
+      .stat-card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 20px;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
 
-.stat-card .label {
-    font-family: var(--mono);
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    color: var(--muted);
-}
+      .stat-card .label {
+        font-family: var(--mono);
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        color: var(--muted);
+      }
 
-.stat-card .value {
-    font-family: var(--mono);
-    font-size: 32px;
-    font-weight: 700;
-}
+      .stat-card .value {
+        font-family: var(--mono);
+        font-size: 32px;
+        font-weight: 700;
+      }
 
-.stat-card.students .value  { color: var(--cyan); }
-.stat-card.present  .value  { color: var(--green); }
-.stat-card.incomplete .value { color: var(--orange); }
-.stat-card.absent   .value  { color: var(--red); }
-.stat-card.exams    .value  { color: var(--accent); }
+      .stat-card.students .value {
+        color: var(--cyan);
+      }
+      .stat-card.present .value {
+        color: var(--green);
+      }
+      .stat-card.incomplete .value {
+        color: var(--orange);
+      }
+      .stat-card.absent .value {
+        color: var(--red);
+      }
+      .stat-card.exams .value {
+        color: var(--accent);
+      }
 
-.stat-card .bar {
-    margin-top: 8px;
-    height: 4px;
-    border-radius: 2px;
-    background: var(--border);
-    overflow: hidden;
-}
+      .stat-card .bar {
+        margin-top: 8px;
+        height: 4px;
+        border-radius: 2px;
+        background: var(--border);
+        overflow: hidden;
+      }
 
-.stat-card .bar-fill { height: 100%; border-radius: 2px; transition: width 0.5s ease; }
+      .stat-card .bar-fill {
+        height: 100%;
+        border-radius: 2px;
+        transition: width 0.5s ease;
+      }
 
-.stat-card.students  .bar-fill { background: var(--cyan); }
-.stat-card.present   .bar-fill { background: var(--green); }
-.stat-card.incomplete .bar-fill { background: var(--orange); }
-.stat-card.absent    .bar-fill { background: var(--red); }
-.stat-card.exams     .bar-fill { background: var(--accent); }
+      .stat-card.students .bar-fill {
+        background: var(--cyan);
+      }
+      .stat-card.present .bar-fill {
+        background: var(--green);
+      }
+      .stat-card.incomplete .bar-fill {
+        background: var(--orange);
+      }
+      .stat-card.absent .bar-fill {
+        background: var(--red);
+      }
+      .stat-card.exams .bar-fill {
+        background: var(--accent);
+      }
 
-/* ── Alert Box ────────────────────────────────────────────── */
-.alert-box {
-    background: rgba(239, 68, 68, 0.08);
-    border: 1px solid rgba(239, 68, 68, 0.3);
-    border-left: 4px solid var(--red);
-    border-radius: 6px;
-    padding: 16px 20px;
-    margin-bottom: 24px;
-    display: none;                     /* hidden by default */
-}
+      /* ── Alert Box ────────────────────────────────────────────── */
+      .alert-box {
+        background: rgba(239, 68, 68, 0.08);
+        border: 1px solid rgba(239, 68, 68, 0.3);
+        border-left: 4px solid var(--red);
+        border-radius: 6px;
+        padding: 16px 20px;
+        margin-bottom: 24px;
+        display: none; /* hidden by default */
+      }
 
-.alert-box.show { display: block; }
+      .alert-box.show {
+        display: block;
+      }
 
-.alert-box h3 {
-    font-family: var(--mono);
-    font-size: 13px;
-    color: var(--red);
-    margin-bottom: 8px;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-}
+      .alert-box h3 {
+        font-family: var(--mono);
+        font-size: 13px;
+        color: var(--red);
+        margin-bottom: 8px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
 
-.alert-box ul {
-    list-style: none;
-    padding: 0;
-}
+      .alert-box ul {
+        list-style: none;
+        padding: 0;
+      }
 
-.alert-box li {
-    font-size: 14px;
-    padding: 4px 0;
-    color: var(--text);
-    font-family: var(--mono);
-    font-size: 13px;
-}
+      .alert-box li {
+        font-size: 14px;
+        padding: 4px 0;
+        color: var(--text);
+        font-family: var(--mono);
+        font-size: 13px;
+      }
 
-.alert-box li::before {
-    content: '▸ ';
-    color: var(--red);
-}
+      .alert-box li::before {
+        content: "▸ ";
+        color: var(--red);
+      }
 
-/* ── Section ──────────────────────────────────────────────── */
-.section {
-    margin-bottom: 32px;
-}
+      /* ── Section ──────────────────────────────────────────────── */
+      .section {
+        margin-bottom: 32px;
+      }
 
-.section-title {
-    font-family: var(--mono);
-    font-size: 13px;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    color: var(--muted);
-    margin-bottom: 12px;
-    padding-bottom: 8px;
-    border-bottom: 1px solid var(--border);
-}
+      .section-title {
+        font-family: var(--mono);
+        font-size: 13px;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        color: var(--muted);
+        margin-bottom: 12px;
+        padding-bottom: 8px;
+        border-bottom: 1px solid var(--border);
+      }
 
-/* ── Tables ───────────────────────────────────────────────── */
-.table-wrap {
-    overflow-x: auto;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--surface);
-}
+      /* ── Tables ───────────────────────────────────────────────── */
+      .table-wrap {
+        overflow-x: auto;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--surface);
+      }
 
-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 14px;
-}
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 14px;
+      }
 
-thead th {
-    font-family: var(--mono);
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.8px;
-    color: var(--muted);
-    text-align: left;
-    padding: 12px 16px;
-    border-bottom: 1px solid var(--border);
-    background: rgba(255,255,255,0.02);
-    white-space: nowrap;
-}
+      thead th {
+        font-family: var(--mono);
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.8px;
+        color: var(--muted);
+        text-align: left;
+        padding: 12px 16px;
+        border-bottom: 1px solid var(--border);
+        background: rgba(255, 255, 255, 0.02);
+        white-space: nowrap;
+      }
 
-tbody td {
-    padding: 10px 16px;
-    border-bottom: 1px solid var(--border);
-    white-space: nowrap;
-}
+      tbody td {
+        padding: 10px 16px;
+        border-bottom: 1px solid var(--border);
+        white-space: nowrap;
+      }
 
-tbody tr:last-child td { border-bottom: none; }
-tbody tr:hover { background: rgba(255,255,255,0.03); }
+      tbody tr:last-child td {
+        border-bottom: none;
+      }
+      tbody tr:hover {
+        background: rgba(255, 255, 255, 0.03);
+      }
 
-/* ── Badges ───────────────────────────────────────────────── */
-.badge {
-    font-family: var(--mono);
-    font-size: 11px;
-    font-weight: 600;
-    padding: 3px 10px;
-    border-radius: 4px;
-    letter-spacing: 0.5px;
-}
+      /* ── Badges ───────────────────────────────────────────────── */
+      .badge {
+        font-family: var(--mono);
+        font-size: 11px;
+        font-weight: 600;
+        padding: 3px 10px;
+        border-radius: 4px;
+        letter-spacing: 0.5px;
+      }
 
-.badge.present {
-    background: rgba(34,197,94,0.15);
-    color: var(--green);
-}
+      .badge.present {
+        background: rgba(34, 197, 94, 0.15);
+        color: var(--green);
+      }
 
-.badge.incomplete {
-    background: rgba(245,158,11,0.15);
-    color: var(--orange);
-}
+      .badge.incomplete {
+        background: rgba(245, 158, 11, 0.15);
+        color: var(--orange);
+      }
 
-/* ── Empty state ──────────────────────────────────────────── */
-.empty {
-    text-align: center;
-    padding: 40px 20px;
-    color: var(--muted);
-    font-family: var(--mono);
-    font-size: 13px;
-}
+      /* ── Empty state ──────────────────────────────────────────── */
+      .empty {
+        text-align: center;
+        padding: 40px 20px;
+        color: var(--muted);
+        font-family: var(--mono);
+        font-size: 13px;
+      }
 
-/* ── Footer ───────────────────────────────────────────────── */
-.footer {
-    text-align: center;
-    padding: 20px;
-    font-family: var(--mono);
-    font-size: 11px;
-    color: var(--muted);
-    border-top: 1px solid var(--border);
-    margin-top: 20px;
-}
-</style>
-</head>
-<body>
-
-<!-- ── Header ─────────────────────────────────────────────── -->
-<header class="header">
-    <div class="header-left">
+      /* ── Footer ───────────────────────────────────────────────── */
+      .footer {
+        text-align: center;
+        padding: 20px;
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--muted);
+        border-top: 1px solid var(--border);
+        margin-top: 20px;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- ── Header ─────────────────────────────────────────────── -->
+    <header class="header">
+      <div class="header-left">
         <h1>ATTENDANCE DASHBOARD</h1>
         <span class="header-tag">INF2009 · T15</span>
-    </div>
-    <div class="header-right">
+      </div>
+      <div class="header-right">
         <span id="clock">--:--:--</span>
         <span><span class="refresh-dot"></span> auto-refresh 10s</span>
-    </div>
-</header>
+      </div>
+    </header>
 
-<div class="container">
-
-    <!-- ── Stat Cards ─────────────────────────────────────── -->
-    <div class="stats-grid">
+    <div class="container">
+      <!-- ── Stat Cards ─────────────────────────────────────── -->
+      <div class="stats-grid">
         <div class="stat-card students">
-            <span class="label">Total Students</span>
-            <span class="value" id="stat-students">—</span>
-            <div class="bar"><div class="bar-fill" id="bar-students" style="width:0%"></div></div>
+          <span class="label">Total Students</span>
+          <span class="value" id="stat-students">—</span>
+          <div class="bar">
+            <div class="bar-fill" id="bar-students" style="width: 0%"></div>
+          </div>
         </div>
         <div class="stat-card present">
-            <span class="label">Present</span>
-            <span class="value" id="stat-present">—</span>
-            <div class="bar"><div class="bar-fill" id="bar-present" style="width:0%"></div></div>
+          <span class="label">Present</span>
+          <span class="value" id="stat-present">—</span>
+          <div class="bar">
+            <div class="bar-fill" id="bar-present" style="width: 0%"></div>
+          </div>
         </div>
         <div class="stat-card incomplete">
-            <span class="label">Incomplete</span>
-            <span class="value" id="stat-incomplete">—</span>
-            <div class="bar"><div class="bar-fill" id="bar-incomplete" style="width:0%"></div></div>
+          <span class="label">Incomplete</span>
+          <span class="value" id="stat-incomplete">—</span>
+          <div class="bar">
+            <div class="bar-fill" id="bar-incomplete" style="width: 0%"></div>
+          </div>
         </div>
         <div class="stat-card absent">
-            <span class="label">Absent</span>
-            <span class="value" id="stat-absent">—</span>
-            <div class="bar"><div class="bar-fill" id="bar-absent" style="width:0%"></div></div>
+          <span class="label">Absent</span>
+          <span class="value" id="stat-absent">—</span>
+          <div class="bar">
+            <div class="bar-fill" id="bar-absent" style="width: 0%"></div>
+          </div>
         </div>
         <div class="stat-card exams">
-            <span class="label">Exams</span>
-            <span class="value" id="stat-exams">—</span>
-            <div class="bar"><div class="bar-fill" id="bar-exams" style="width:100%"></div></div>
+          <span class="label">Exams</span>
+          <span class="value" id="stat-exams">—</span>
+          <div class="bar">
+            <div class="bar-fill" id="bar-exams" style="width: 100%"></div>
+          </div>
         </div>
-    </div>
+      </div>
 
-    <!-- ── Alert Box (incomplete) ─────────────────────────── -->
-    <div class="alert-box" id="alert-box">
+      <!-- ── Alert Box (incomplete) ─────────────────────────── -->
+      <div class="alert-box" id="alert-box">
         <h3>⚠ Incomplete / Flagged for Review</h3>
         <ul id="alert-list"></ul>
-    </div>
+      </div>
 
-    <!-- ── Attendance Table ───────────────────────────────── -->
-    <div class="section">
+      <!-- ── Attendance Table ───────────────────────────────── -->
+      <div class="section">
         <div class="section-title">Attendance Records</div>
         <div class="table-wrap">
-            <table>
-                <thead>
-                    <tr>
-                        <th>Admin No.</th>
-                        <th>Name</th>
-                        <th>Course</th>
-                        <th>Exam</th>
-                        <th>Module</th>
-                        <th>Date</th>
-                        <th>Status</th>
-                    </tr>
-                </thead>
-                <tbody id="attendance-body">
-                    <tr><td colspan="7" class="empty">Loading…</td></tr>
-                </tbody>
-            </table>
+          <table>
+            <thead>
+              <tr>
+                <th>Admin No.</th>
+                <th>Name</th>
+                <th>Course</th>
+                <th>Exam</th>
+                <th>Module</th>
+                <th>Date</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="attendance-body">
+              <tr>
+                <td colspan="7" class="empty">Loading…</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
-    </div>
+      </div>
 
-    <!-- ── Exams Table ────────────────────────────────────── -->
-    <div class="section">
+      <!-- ── Exams Table ────────────────────────────────────── -->
+      <div class="section">
         <div class="section-title">Registered Exams</div>
         <div class="table-wrap">
-            <table>
-                <thead>
-                    <tr>
-                        <th>ID</th>
-                        <th>Exam Name</th>
-                        <th>Module Code</th>
-                        <th>Date</th>
-                        <th>Description</th>
-                    </tr>
-                </thead>
-                <tbody id="exams-body">
-                    <tr><td colspan="5" class="empty">Loading…</td></tr>
-                </tbody>
-            </table>
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Exam Name</th>
+                <th>Module Code</th>
+                <th>Date</th>
+                <th>Description</th>
+              </tr>
+            </thead>
+            <tbody id="exams-body">
+              <tr>
+                <td colspan="5" class="empty">Loading…</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
+      </div>
     </div>
-</div>
 
-<div class="footer">
-    Closed-Loop Attendance Verification System &middot; Raspberry Pi 5 &middot; INF2009 Team 15
-</div>
+    <div class="footer">
+      Closed-Loop Attendance Verification System &middot; Raspberry Pi 5
+      &middot; INF2009 Team 15
+    </div>
 
-<!-- ── JavaScript ─────────────────────────────────────────── -->
-<script>
-(function () {
-    "use strict";
+    <!-- ── JavaScript ─────────────────────────────────────────── -->
+    <script>
+      (function () {
+        "use strict";
 
-    // ── Live Clock ──────────────────────────────────────────
-    function updateClock() {
-        const now = new Date();
-        document.getElementById("clock").textContent = now.toLocaleTimeString("en-GB", { hour12: false });
-    }
-    setInterval(updateClock, 1000);
-    updateClock();
+        // ── Live Clock ──────────────────────────────────────────
+        function updateClock() {
+          const now = new Date();
+          document.getElementById("clock").textContent = now.toLocaleTimeString(
+            "en-GB",
+            { hour12: false },
+          );
+        }
+        setInterval(updateClock, 1000);
+        updateClock();
 
-    // ── Helpers ─────────────────────────────────────────────
-    function esc(str) {
-        if (str == null) return "—";
-        const d = document.createElement("div");
-        d.textContent = String(str);
-        return d.innerHTML;
-    }
+        // ── Helpers ─────────────────────────────────────────────
+        function esc(str) {
+          if (str == null) return "—";
+          const d = document.createElement("div");
+          d.textContent = String(str);
+          return d.innerHTML;
+        }
 
-    function pct(part, total) {
-        return total > 0 ? Math.round((part / total) * 100) : 0;
-    }
+        function pct(part, total) {
+          return total > 0 ? Math.round((part / total) * 100) : 0;
+        }
 
-    // ── Fetch Stats ─────────────────────────────────────────
-    async function fetchStats() {
-        try {
+        // ── Fetch Stats ─────────────────────────────────────────
+        async function fetchStats() {
+          try {
             const res = await fetch("/api/stats");
             const d = await res.json();
 
-            document.getElementById("stat-students").textContent   = d.total_students;
-            document.getElementById("stat-present").textContent     = d.present;
-            document.getElementById("stat-incomplete").textContent  = d.incomplete;
-            document.getElementById("stat-absent").textContent      = d.absent;
-            document.getElementById("stat-exams").textContent       = d.total_exams;
+            document.getElementById("stat-students").textContent =
+              d.total_students;
+            document.getElementById("stat-present").textContent = d.present;
+            document.getElementById("stat-incomplete").textContent =
+              d.incomplete;
+            document.getElementById("stat-absent").textContent = d.absent;
+            document.getElementById("stat-exams").textContent = d.total_exams;
 
             const total = d.total_students || 1;
-            document.getElementById("bar-students").style.width     = "100%";
-            document.getElementById("bar-present").style.width      = pct(d.present, total) + "%";
-            document.getElementById("bar-incomplete").style.width   = pct(d.incomplete, total) + "%";
-            document.getElementById("bar-absent").style.width       = pct(d.absent, total) + "%";
-        } catch (e) {
+            document.getElementById("bar-students").style.width = "100%";
+            document.getElementById("bar-present").style.width =
+              pct(d.present, total) + "%";
+            document.getElementById("bar-incomplete").style.width =
+              pct(d.incomplete, total) + "%";
+            document.getElementById("bar-absent").style.width =
+              pct(d.absent, total) + "%";
+          } catch (e) {
             console.error("Stats fetch error:", e);
+          }
         }
-    }
 
-    // ── Fetch Attendance ────────────────────────────────────
-    async function fetchAttendance() {
-        try {
+        // ── Fetch Attendance ────────────────────────────────────
+        async function fetchAttendance() {
+          try {
             const res = await fetch("/api/attendance");
             const rows = await res.json();
             const tbody = document.getElementById("attendance-body");
 
             if (rows.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="7" class="empty">No attendance records yet.</td></tr>';
-                return;
+              tbody.innerHTML =
+                '<tr><td colspan="7" class="empty">No attendance records yet.</td></tr>';
+              return;
             }
 
-            tbody.innerHTML = rows.map(function (r) {
-                const statusClass = r.attendance_status ? "present" : "incomplete";
-                const statusText  = r.attendance_status ? "PRESENT" : "INCOMPLETE";
-                return '<tr>' +
-                    '<td>' + esc(r.student_admin_number) + '</td>' +
-                    '<td>' + esc(r.student_full_name) + '</td>' +
-                    '<td>' + esc(r.student_course) + '</td>' +
-                    '<td>' + esc(r.exam_name) + '</td>' +
-                    '<td>' + esc(r.exam_module_code) + '</td>' +
-                    '<td>' + esc(r.exam_date) + '</td>' +
-                    '<td><span class="badge ' + statusClass + '">' + statusText + '</span></td>' +
-                    '</tr>';
-            }).join("");
-        } catch (e) {
+            tbody.innerHTML = rows
+              .map(function (r) {
+                const statusClass = r.attendance_status
+                  ? "present"
+                  : "incomplete";
+                const statusText = r.attendance_status
+                  ? "PRESENT"
+                  : "INCOMPLETE";
+                return (
+                  "<tr>" +
+                  "<td>" +
+                  esc(r.student_admin_number) +
+                  "</td>" +
+                  "<td>" +
+                  esc(r.student_full_name) +
+                  "</td>" +
+                  "<td>" +
+                  esc(r.student_course) +
+                  "</td>" +
+                  "<td>" +
+                  esc(r.exam_name) +
+                  "</td>" +
+                  "<td>" +
+                  esc(r.exam_module_code) +
+                  "</td>" +
+                  "<td>" +
+                  esc(r.exam_date) +
+                  "</td>" +
+                  '<td><span class="badge ' +
+                  statusClass +
+                  '">' +
+                  statusText +
+                  "</span></td>" +
+                  "</tr>"
+                );
+              })
+              .join("");
+          } catch (e) {
             console.error("Attendance fetch error:", e);
+          }
         }
-    }
 
-    // ── Fetch Incomplete (alert box) ────────────────────────
-    async function fetchIncomplete() {
-        try {
+        // ── Fetch Incomplete (alert box) ────────────────────────
+        async function fetchIncomplete() {
+          try {
             const res = await fetch("/api/incomplete");
             const rows = await res.json();
-            const box  = document.getElementById("alert-box");
+            const box = document.getElementById("alert-box");
             const list = document.getElementById("alert-list");
 
             if (rows.length === 0) {
-                box.classList.remove("show");
-                return;
+              box.classList.remove("show");
+              return;
             }
 
             box.classList.add("show");
-            list.innerHTML = rows.map(function (r) {
-                return '<li>' + esc(r.student_admin_number) + ' — ' +
-                    esc(r.student_full_name) + ' — ' +
-                    esc(r.exam_name) + ' (' + esc(r.exam_module_code) + ')</li>';
-            }).join("");
-        } catch (e) {
+            list.innerHTML = rows
+              .map(function (r) {
+                return (
+                  "<li>" +
+                  esc(r.student_admin_number) +
+                  " — " +
+                  esc(r.student_full_name) +
+                  " — " +
+                  esc(r.exam_name) +
+                  " (" +
+                  esc(r.exam_module_code) +
+                  ")</li>"
+                );
+              })
+              .join("");
+          } catch (e) {
             console.error("Incomplete fetch error:", e);
+          }
         }
-    }
 
-    // ── Fetch Exams ─────────────────────────────────────────
-    async function fetchExams() {
-        try {
+        // ── Fetch Exams ─────────────────────────────────────────
+        async function fetchExams() {
+          try {
             const res = await fetch("/api/exams");
             const rows = await res.json();
             const tbody = document.getElementById("exams-body");
 
             if (rows.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="5" class="empty">No exams registered.</td></tr>';
-                return;
+              tbody.innerHTML =
+                '<tr><td colspan="5" class="empty">No exams registered.</td></tr>';
+              return;
             }
 
-            tbody.innerHTML = rows.map(function (r) {
-                return '<tr>' +
-                    '<td>' + esc(r.exam_id) + '</td>' +
-                    '<td>' + esc(r.exam_name) + '</td>' +
-                    '<td>' + esc(r.exam_module_code) + '</td>' +
-                    '<td>' + esc(r.exam_date) + '</td>' +
-                    '<td>' + esc(r.exam_description) + '</td>' +
-                    '</tr>';
-            }).join("");
-        } catch (e) {
+            tbody.innerHTML = rows
+              .map(function (r) {
+                return (
+                  "<tr>" +
+                  "<td>" +
+                  esc(r.exam_id) +
+                  "</td>" +
+                  "<td>" +
+                  esc(r.exam_name) +
+                  "</td>" +
+                  "<td>" +
+                  esc(r.exam_module_code) +
+                  "</td>" +
+                  "<td>" +
+                  esc(r.exam_date) +
+                  "</td>" +
+                  "<td>" +
+                  esc(r.exam_description) +
+                  "</td>" +
+                  "</tr>"
+                );
+              })
+              .join("");
+          } catch (e) {
             console.error("Exams fetch error:", e);
+          }
         }
-    }
 
-    // ── Refresh all ─────────────────────────────────────────
-    function refreshAll() {
-        fetchStats();
-        fetchAttendance();
-        fetchIncomplete();
-        fetchExams();
-    }
+        // ── Refresh all ─────────────────────────────────────────
+        function refreshAll() {
+          fetchStats();
+          fetchAttendance();
+          fetchIncomplete();
+          fetchExams();
+        }
 
-    // Initial load + auto-refresh every 10 seconds
-    refreshAll();
-    setInterval(refreshAll, 10000);
-})();
-</script>
-
-</body>
+        // Initial load + auto-refresh every 10 seconds
+        refreshAll();
+        setInterval(refreshAll, 10000);
+      })();
+    </script>
+  </body>
 </html>
