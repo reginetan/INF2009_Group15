@@ -410,12 +410,27 @@ def main():
                     confirmed = True
                     log.info("CONFIRMED MATCH -> %s | rate=%.0f%% | avg=%.3f", sid, match_rate*100, avg_score)
                     print(f"CONFIRMED MATCH | {sid} | {name} | rate={match_rate:.0%} | avg={avg_score:.4f}")
+                    try:
+                        from app.rpi5_serial_sender import send_result
+                        send_result("MATCHED", sid)
+                    except Exception:
+                        pass
                     vote_buffer.clear()
                 else:
                     confirmed = False
                     log.info("CONFLICT -- multiple IDs, NO MATCH")
+                    try:
+                        from app.rpi5_serial_sender import send_result
+                        send_result("NO_MATCH", "")
+                    except Exception:
+                        pass
             else:
                 confirmed = False
+                try:
+                    from app.rpi5_serial_sender import send_result
+                    send_result("NO_MATCH", "")
+                except Exception:
+                    pass
 
             cv2.imshow("Face Recognition -- T2", draw_results(frame, results, confirmed))
             if cv2.waitKey(1) & 0xFF == ord("q"):

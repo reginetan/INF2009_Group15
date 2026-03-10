@@ -420,6 +420,19 @@ def create_attendance(record: AttendanceCreate):
                 (record.attendance_student_id, record.attendance_exam_id, record.attendance_status)
             )
             attendance_id = cursor.lastrowid
+
+            # Send ENTRY to M5StickC — creating a record means student just arrived
+            try:
+                from app.rpi5_serial_sender import send_result
+                student_row = cursor.execute(
+                    "SELECT student_admin_number FROM students WHERE student_id = ?",
+                    (record.attendance_student_id,)
+                ).fetchone()
+                admin_no = student_row["student_admin_number"] if student_row else ""
+                send_result("ENTRY", admin_no)
+            except Exception:
+                pass
+
             return {
                 "attendance_id": attendance_id,
                 "attendance_student_id": record.attendance_student_id,
@@ -441,6 +454,22 @@ def update_attendance(attendance_id: int, record: AttendanceUpdate):
 
         if cursor.rowcount == 0:
             raise HTTPException(status_code=404, detail="Attendance record not found")
+
+        # Send result to M5StickC via serial
+        try:
+            from app.rpi5_serial_sender import send_result
+            student_row = cursor.execute("""
+                SELECT s.student_admin_number FROM attendance a
+                JOIN students s ON a.attendance_student_id = s.student_id
+                WHERE a.attendance_id = ?
+            """, (attendance_id,)).fetchone()
+            admin_no = student_row["student_admin_number"] if student_row else ""
+            if record.attendance_status:
+                send_result("EXIT", admin_no)
+            else:
+                send_result("INCOMPLETE", admin_no)
+        except Exception:
+            pass
 
         return {"message": "Attendance updated successfully"}
 
