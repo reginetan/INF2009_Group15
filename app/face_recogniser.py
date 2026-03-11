@@ -601,8 +601,10 @@ def main():
                     else:
                         confirmed = False
                         log.info("CONFLICT -- multiple IDs, rejecting.")
+                        print(f"NO MATCH | CONFLICT -- multiple IDs detected | rate={match_rate:.0%} | avg={avg_score:.4f}")
                 else:
                     confirmed = False
+                    print(f"NO MATCH | rate={match_rate:.0%} | avg={avg_score:.4f}")
 
                 cv2.imshow("Face Recognition -- Pi Cam",
                            draw_results(frame, results, confirmed))
