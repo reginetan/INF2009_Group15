@@ -23,3 +23,5 @@ app/images/
 # Exports
 exports/app/models/arcfaceresnet100-8.onnx
 app/models/mobilefacenet_int8.onnx
+exports/
+*.onnx
