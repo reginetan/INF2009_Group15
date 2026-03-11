@@ -1,157 +1,259 @@
+"""
+face_recogniser.py — ArcFace ResNet100 ONNX + YuNet alignment + Pi Camera Module 2
+Group 15 — INF2009 Edge Computing
+"""
 import argparse
 import logging
 import pickle
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable
 
 import cv2
 import numpy as np
+import onnxruntime as ort
+import os
 
-# --- Pi Camera Module 2: use picamera2 instead of cv2.VideoCapture.
-# picamera2 gives direct ISP control (AWB, exposure, gain) which is essential
-# for keeping embeddings consistent across frames.
+os.environ["ORT_LOGGING_LEVEL"] = "3"
+ort.set_default_logger_severity(3)
+
 try:
     from picamera2 import Picamera2
-    from libcamera import controls
     PICAMERA2_AVAILABLE = True
 except ImportError:
     PICAMERA2_AVAILABLE = False
-    logging.warning("picamera2 not found -- will fall back to cv2.VideoCapture.")
-
-try:
-    import onnxruntime as ort
-    import os
-    os.environ["ORT_LOGGING_LEVEL"] = "3"
-    ort.set_default_logger_severity(3)
-    ONNX_AVAILABLE = True
-except ImportError:
-    ONNX_AVAILABLE = False
-    logging.warning("onnxruntime not installed - falling back to OpenCV DNN backend.")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
 
-BASE_DIR           = Path(__file__).parent
-MODEL_DIR          = BASE_DIR / "models"
-IMAGE_DIR          = BASE_DIR / "images"
-YUNET_PATH         = MODEL_DIR / "face_detection_yunet_2023mar.onnx"
-MOBILEFACENET_PATH = MODEL_DIR / "mobilefacenet_int8.onnx"
-DB_PATH            = BASE_DIR / "enrolled.pkl"
+# ---------------------------------------------------------------------------
+# Paths & constants
+# ---------------------------------------------------------------------------
+BASE_DIR     = Path(__file__).parent
+MODEL_DIR    = BASE_DIR / "models"
+ARCFACE_PATH = MODEL_DIR / "arcfaceresnet100-8.onnx"
+YUNET_PATH   = MODEL_DIR / "face_detection_yunet_2023mar.onnx"
+DB_PATH      = BASE_DIR / "enrolled.pkl"
 
-# Pi Camera Module 2 produces much cleaner, higher-contrast images than the
-# C270 so the cosine similarity scores are generally higher. 0.65 remains a
-# safe lower bound; raise to 0.70 if you get false positives in practice.
-COSINE_THRESHOLD   = 0.65
+# Matching — with alignment, genuine pairs ~0.40-0.55, impostors ~0.10-0.29
+COSINE_THRESHOLD = 0.35
+MARGIN_MIN       = 0.05   # top score must beat 2nd place by at least this
 
-MODEL_INPUT_SIZE   = (112, 112)
-DETECT_INPUT_SIZE  = (320, 240)
+# Camera / detection
+CAM_SIZE    = (640, 480)
+DETECT_SIZE = (320, 240)
+MODEL_SIZE  = (112, 112)
 
-# Capture at native 640x480 then downsample -- gives the ISP more pixels to
-# work with for demosaicing, which sharpens the final 320x240 face crop.
-CAM_CAPTURE_SIZE   = (640, 480)
+# Vote buffer
+WINDOW_SIZE    = 5
+MIN_MATCH_RATE = 0.60
+MIN_AVG_SCORE  = 0.35
 
-WINDOW_SIZE        = 7
-MIN_MATCH_RATE     = 0.70
-MIN_AVG_SCORE      = 0.65
+# Quality gate
+BLUR_MIN       = 50
+BRIGHTNESS_MIN = 30
+BRIGHTNESS_MAX = 230
 
-BLUR_THRESHOLD        = 80
-BRIGHTNESS_MIN        = 50
-BRIGHTNESS_MAX        = 200
+# Enrollment
+ENROLL_FRAMES   = 15
+ENROLL_MIN_GOOD = 5
 
-ENROLL_CAPTURE_FRAMES = 10
-ENROLL_MIN_GOOD       = 5
+# ArcFace reference landmarks for 112x112 output
+ARCFACE_REF_PTS = np.float32([
+    [38.2946, 51.6963],
+    [73.5318, 51.5014],
+    [56.0252, 71.7366],
+    [41.5493, 92.3655],
+    [70.7299, 92.2041],
+])
 
 
 # ---------------------------------------------------------------------------
-# Pi Camera Module 2 helper
+# Face alignment
 # ---------------------------------------------------------------------------
 
-def _make_picamera2() -> "Picamera2":
-    """
-    Open and configure the Pi Camera Module 2.
+def align_face(img: np.ndarray, landmarks: list) -> np.ndarray:
+    src = np.float32(landmarks)
+    M, _ = cv2.estimateAffinePartial2D(src, ARCFACE_REF_PTS, method=cv2.LMEDS)
+    if M is None:
+        return None
+    return cv2.warpAffine(img, M, MODEL_SIZE, flags=cv2.INTER_LINEAR)
 
-    Key choices:
-    - RGB888 format  → frames arrive as BGR numpy arrays ready for OpenCV,
-                        no colour conversion needed.
-    - Fixed AWB / exposure via controls → same colour space at enrollment and
-      recognition time, which keeps cosine similarity stable across sessions.
-    - 30 warmup frames → ISP AGC/AWB settles before we start comparing embeddings.
-    """
+
+# ---------------------------------------------------------------------------
+# Camera
+# ---------------------------------------------------------------------------
+
+def open_camera() -> "Picamera2":
     cam = Picamera2()
     cfg = cam.create_preview_configuration(
-        main={"format": "RGB888", "size": CAM_CAPTURE_SIZE},
-        controls={
-            # Lock AWB to a fixed colour temperature (Tungsten ≈ indoor venue)
-            "AwbEnable":    False,
-            "ColourGains":  (1.5, 1.5),   # (r_gain, b_gain); tune per venue lighting
-            # Lock exposure / analogue gain
-            "AeEnable":     False,
-            "ExposureTime": 20000,         # µs (= 1/50 s); increase if image is dark
-            "AnalogueGain": 2.0,
-            # Sharpness and contrast help YuNet detect fine facial landmarks
-            "Sharpness":    1.5,
-            "Contrast":     1.1,
-        },
+        main={"format": "RGB888", "size": CAM_SIZE},
+        controls={"AeEnable": True, "AwbEnable": True, "Sharpness": 2.0, "Contrast": 1.2},
     )
     cam.configure(cfg)
     cam.start()
-
-    log.info("Pi Camera Module 2: burning 30 warmup frames...")
-    for _ in range(30):
+    log.info("Warming up camera (60 frames)...")
+    for _ in range(60):
         cam.capture_array()
     log.info("Camera ready.")
     return cam
 
 
-def _picam_read(cam: "Picamera2") -> np.ndarray:
-    """
-    Capture one frame and return a BGR numpy array at DETECT_INPUT_SIZE.
-
-    picamera2 returns RGB888 → flip to BGR for OpenCV, then resize to the
-    320x240 size the rest of the pipeline expects.
-    """
-    rgb = cam.capture_array()                      # shape (H, W, 3) RGB
+def read_frame(cam: "Picamera2") -> np.ndarray:
+    rgb = cam.capture_array()
     bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
-    return cv2.resize(bgr, DETECT_INPUT_SIZE)
+    return cv2.resize(bgr, DETECT_SIZE)
+
+
+# ---------------------------------------------------------------------------
+# Quality gate
+# ---------------------------------------------------------------------------
+
+def is_good_frame(crop: np.ndarray) -> bool:
+    if crop is None or crop.size == 0:
+        return False
+    gray       = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+    blur       = cv2.Laplacian(gray, cv2.CV_64F).var()
+    brightness = gray.mean()
+    return blur >= BLUR_MIN and BRIGHTNESS_MIN <= brightness <= BRIGHTNESS_MAX
+
+
+# ---------------------------------------------------------------------------
+# ArcFace ONNX
+# ---------------------------------------------------------------------------
+
+class ArcFaceModel:
+    def __init__(self):
+        if not ARCFACE_PATH.exists():
+            raise FileNotFoundError(
+                f"ArcFace model not found at {ARCFACE_PATH}\n"
+                "Download: wget https://github.com/onnx/models/raw/main/validated/"
+                "vision/body_analysis/arcface/model/arcfaceresnet100-8.onnx "
+                "-O models/arcfaceresnet100-8.onnx"
+            )
+        opts = ort.SessionOptions()
+        opts.intra_op_num_threads     = 4
+        opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        self._sess       = ort.InferenceSession(
+            str(ARCFACE_PATH), sess_options=opts,
+            providers=["CPUExecutionProvider"],
+        )
+        self._input_name = self._sess.get_inputs()[0].name
+        log.info("ArcFace ResNet100 ONNX loaded.")
+
+    def embed(self, aligned_112: np.ndarray) -> np.ndarray:
+        """
+        aligned_112: BGR 112x112 face, already warped by align_face().
+        Raw BGR float32 — no pixel normalisation (empirically best for this model).
+        Returns L2-normalised 512-D embedding.
+        """
+        if aligned_112 is None or aligned_112.shape[:2] != MODEL_SIZE:
+            return None
+        try:
+            blob = np.transpose(aligned_112.astype(np.float32), (2, 0, 1))[np.newaxis]
+            raw  = self._sess.run(None, {self._input_name: blob})[0][0]
+            norm = np.linalg.norm(raw)
+            return raw / norm if norm > 0 else raw
+        except Exception as e:
+            log.debug("Embedding error: %s", e)
+            return None
+
+
+# ---------------------------------------------------------------------------
+# Face detector
+# ---------------------------------------------------------------------------
+
+class Detector:
+    def __init__(self):
+        if YUNET_PATH.exists():
+            try:
+                self._yunet = cv2.FaceDetectorYN.create(
+                    str(YUNET_PATH), "", DETECT_SIZE,
+                    score_threshold=0.5, nms_threshold=0.3, top_k=5,
+                )
+                self._mode = "yunet"
+                log.info("YuNet detector loaded.")
+                return
+            except Exception as e:
+                log.warning("YuNet failed: %s", e)
+        self._haar = cv2.CascadeClassifier(
+            cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+        )
+        self._mode = "haar"
+        log.info("Haar Cascade loaded.")
+
+    def detect_and_align(self, frame: np.ndarray) -> tuple:
+        """
+        Returns (aligned_112, bbox, raw_detections).
+        aligned_112 is None if no face found.
+        """
+        h, w = frame.shape[:2]
+        if self._mode == "yunet":
+            self._yunet.setInputSize((w, h))
+            _, faces = self._yunet.detect(frame)
+            if faces is None or len(faces) == 0:
+                return None, None, []
+            best    = max(faces, key=lambda f: f[14])
+            x, y, bw, bh = int(best[0]), int(best[1]), int(best[2]), int(best[3])
+            lm      = [(best[4 + i*2], best[4 + i*2 + 1]) for i in range(5)]
+            aligned = align_face(frame, lm)
+            return aligned, (x, y, bw, bh), faces
+        else:
+            gray  = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            faces = self._haar.detectMultiScale(gray, 1.1, 5, minSize=(50, 50))
+            if len(faces) == 0:
+                return None, None, []
+            x, y, bw, bh = faces[0]
+            crop    = frame[y:y+bh, x:x+bw]
+            aligned = cv2.resize(crop, MODEL_SIZE)
+            return aligned, (x, y, bw, bh), faces
+
+    def detect_and_align_hires(self, img: np.ndarray) -> np.ndarray:
+        """For enrollment from high-res static images — tries multiple scales."""
+        h, w = img.shape[:2]
+        for detect_w in [w, 1280, 640, 320]:
+            if detect_w > w:
+                continue
+            scale    = detect_w / w
+            detect_h = int(h * scale)
+            resized  = cv2.resize(img, (detect_w, detect_h))
+            aligned, bbox, faces = self.detect_and_align(resized)
+            if aligned is not None:
+                log.info("Enrolled at detection size %dx%d", detect_w, detect_h)
+                return aligned
+        return None
 
 
 # ---------------------------------------------------------------------------
 # Database
 # ---------------------------------------------------------------------------
 
-class EnrolledDatabase:
-    def __init__(self, db_path: Path = DB_PATH):
-        self.db_path = db_path
+class Database:
+    def __init__(self):
         self._store: dict = {}
-        self._load()
-
-    def _load(self):
-        if self.db_path.exists():
-            with open(self.db_path, "rb") as f:
+        if DB_PATH.exists():
+            with open(DB_PATH, "rb") as f:
                 self._store = pickle.load(f)
             log.info("DB loaded: %d student(s)", len(self._store))
         else:
-            log.info("No DB found at %s -- starting fresh.", self.db_path)
+            log.info("Empty DB.")
 
     def _save(self):
-        with open(self.db_path, "wb") as f:
+        with open(DB_PATH, "wb") as f:
             pickle.dump(self._store, f)
 
     def add(self, student_id: str, name: str, embedding: np.ndarray):
         if student_id in self._store:
             self._store[student_id]["embeddings"].append(embedding.copy())
-            log.info("Added embedding for: %s -- total=%d", student_id,
-                     len(self._store[student_id]["embeddings"]))
         else:
             self._store[student_id] = {
                 "name":        name,
                 "embeddings":  [embedding.copy()],
                 "enrolled_at": datetime.now(timezone.utc).isoformat(),
             }
-            log.info("Enrolled: %s -- %s", student_id, name)
         self._save()
+        n = len(self._store[student_id]["embeddings"])
+        log.info("Stored embedding for %s (%s) — total=%d", name, student_id, n)
 
     def remove(self, student_id: str) -> bool:
         if student_id in self._store:
@@ -160,319 +262,207 @@ class EnrolledDatabase:
             return True
         return False
 
+    def best_match(self, query: np.ndarray) -> tuple:
+        """Centroid-based cosine match. Returns (sid, name, score, margin)."""
+        if not self._store:
+            return None, None, 0.0, 0.0
+
+        scores = {}
+        for sid, rec in self._store.items():
+            centroid = np.mean(rec["embeddings"], axis=0)
+            norm     = np.linalg.norm(centroid)
+            if norm > 0:
+                centroid /= norm
+            scores[sid] = (float(np.dot(query, centroid)), rec["name"])
+
+        sorted_scores = sorted(scores.items(), key=lambda x: x[1][0], reverse=True)
+        log.info("Scores — %s", " | ".join(f"{v[1]}={v[0]:.4f}" for _, v in sorted_scores))
+
+        best_id, (best_score, best_name) = sorted_scores[0]
+        margin = best_score - sorted_scores[1][1][0] if len(sorted_scores) > 1 else 1.0
+        return best_id, best_name, best_score, margin
+
+    def rebuild(self):
+        for sid, rec in self._store.items():
+            embs     = rec["embeddings"]
+            centroid = np.mean(embs, axis=0)
+            norm     = np.linalg.norm(centroid)
+            if norm > 0:
+                centroid /= norm
+            rec["embeddings"] = [centroid]
+            print(f"  {rec['name']} ({sid}): {len(embs)} -> 1 centroid")
+        self._save()
+
     def list_all(self):
         return [
             {"student_id": sid, "name": v["name"],
-             "enrolled_at": v["enrolled_at"],
-             "num_embeddings": len(v["embeddings"])}
+             "enrolled_at": v["enrolled_at"], "num_embeddings": len(v["embeddings"])}
             for sid, v in self._store.items()
         ]
-
-    def find_best_match(self, query: np.ndarray, sim_fn: Callable) -> tuple:
-        if not self._store:
-            return None, None, 0.0
-        best_id, best_name, best_score = None, None, -1.0
-        for sid, rec in self._store.items():
-            scores = [sim_fn(query, emb) for emb in rec["embeddings"]]
-            score  = max(scores)
-            if score > best_score:
-                best_score, best_id, best_name = score, sid, rec["name"]
-        return best_id, best_name, best_score
 
     def __len__(self):
         return len(self._store)
 
 
 # ---------------------------------------------------------------------------
-# Face detection
+# Recogniser
 # ---------------------------------------------------------------------------
 
-class YuNetDetector:
+class Recogniser:
     def __init__(self):
-        self._detector = None
-        self._fallback = False
-        if YUNET_PATH.exists():
-            try:
-                self._detector = cv2.FaceDetectorYN.create(
-                    str(YUNET_PATH), "", DETECT_INPUT_SIZE,
-                    score_threshold=0.6, nms_threshold=0.3, top_k=5,
-                )
-                log.info("YuNet loaded.")
-            except Exception as e:
-                log.warning("YuNet failed (%s) -- using Haar fallback.", e)
-                self._init_haar()
-        else:
-            log.warning("YuNet model not found at %s -- using Haar fallback.", YUNET_PATH)
-            self._init_haar()
+        self.db       = Database()
+        self.detector = Detector()
+        self.arcface  = ArcFaceModel()
 
-    def _init_haar(self):
-        self._fallback = True
-        self._detector = cv2.CascadeClassifier(
-            cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
-        )
-        log.info("Haar Cascade loaded.")
+    def identify(self, aligned_112: np.ndarray) -> dict:
+        emb = self.arcface.embed(aligned_112)
+        if emb is None:
+            return {"match": False, "student_id": None, "name": None,
+                    "score": 0.0, "margin": 0.0}
+        sid, name, score, margin = self.db.best_match(emb)
+        matched = score >= COSINE_THRESHOLD and margin >= MARGIN_MIN
+        return {"match": matched, "student_id": sid, "name": name,
+                "score": round(score, 4), "margin": round(margin, 4)}
 
-    def detect(self, frame: np.ndarray) -> list:
-        if self._detector is None:
-            return []
-        if self._fallback:
-            gray  = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            faces = self._detector.detectMultiScale(gray, 1.1, 5, minSize=(60, 60))
-            return [np.array([x, y, w, h], dtype=np.float32) for (x, y, w, h) in faces]
-        h, w = frame.shape[:2]
-        resized = cv2.resize(frame, DETECT_INPUT_SIZE)
-        self._detector.setInputSize(DETECT_INPUT_SIZE)
-        _, faces = self._detector.detect(resized)
-        if faces is None:
-            return []
-        sx, sy = w / DETECT_INPUT_SIZE[0], h / DETECT_INPUT_SIZE[1]
-        out = []
-        for f in faces:
-            f = f.copy()
-            f[0] *= sx; f[1] *= sy; f[2] *= sx; f[3] *= sy
-            out.append(f)
-        return out
-
-    def crop_face(self, frame: np.ndarray, det) -> np.ndarray:
-        x, y, w, h = int(det[0]), int(det[1]), int(det[2]), int(det[3])
-        mx, my = int(w * 0.10), int(h * 0.10)
-        fh, fw = frame.shape[:2]
-        return frame[max(0, y-my):min(fh, y+h+my), max(0, x-mx):min(fw, x+w+mx)]
-
-
-# ---------------------------------------------------------------------------
-# Face recognition
-# ---------------------------------------------------------------------------
-
-class FaceRecogniser:
-    def __init__(self, threshold: float = COSINE_THRESHOLD):
-        self.threshold = threshold
-        self.db        = EnrolledDatabase()
-        self.detector  = YuNetDetector()
-        self._session  = self._load_model()
-        self._clahe    = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-
-    def _load_model(self):
-        if not MOBILEFACENET_PATH.exists():
-            log.warning("MobileFaceNet model not found at %s. Run: bash download_models.sh",
-                        MOBILEFACENET_PATH)
-            return None
-        if ONNX_AVAILABLE:
-            opts = ort.SessionOptions()
-            opts.intra_op_num_threads = 2
-            opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-            sess = ort.InferenceSession(
-                str(MOBILEFACENET_PATH),
-                sess_options=opts,
-                providers=["CPUExecutionProvider"],
-            )
-            log.info("MobileFaceNet INT8 loaded via ONNX Runtime.")
-            return sess
-        else:
-            net = cv2.dnn.readNetFromONNX(str(MOBILEFACENET_PATH))
-            net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
-            net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
-            log.info("MobileFaceNet loaded via OpenCV DNN (fallback).")
-            return net
-
-    @staticmethod
-    def _is_quality_frame(face_crop: np.ndarray) -> bool:
-        if face_crop is None or face_crop.size == 0:
+    def enroll_from_image(self, student_id: str, name: str, img: np.ndarray) -> bool:
+        aligned = self.detector.detect_and_align_hires(img)
+        if aligned is None:
+            log.error("No face detected in image.")
             return False
-        gray            = cv2.cvtColor(face_crop, cv2.COLOR_BGR2GRAY)
-        blur_score      = cv2.Laplacian(gray, cv2.CV_64F).var()
-        mean_brightness = float(gray.mean())
-        if blur_score < BLUR_THRESHOLD:
-            log.debug("Frame rejected: blur=%.1f < %d", blur_score, BLUR_THRESHOLD)
+        emb = self.arcface.embed(aligned)
+        if emb is None:
+            log.error("Could not extract embedding.")
             return False
-        if not (BRIGHTNESS_MIN <= mean_brightness <= BRIGHTNESS_MAX):
-            log.debug("Frame rejected: brightness=%.1f out of [%d, %d]",
-                      mean_brightness, BRIGHTNESS_MIN, BRIGHTNESS_MAX)
-            return False
+        self.db.add(student_id, name, emb)
+        print(f"Enrollment SUCCESS — {name} ({student_id})")
         return True
 
-    def _preprocess_raw(self, face_img: np.ndarray) -> np.ndarray:
-        resized = cv2.resize(face_img, MODEL_INPUT_SIZE)
-        # CLAHE on L channel lifts local contrast without shifting hue
-        lab = cv2.cvtColor(resized, cv2.COLOR_BGR2LAB)
-        l, a, b = cv2.split(lab)
-        l       = self._clahe.apply(l)
-        resized = cv2.cvtColor(cv2.merge([l, a, b]), cv2.COLOR_LAB2BGR)
-        rgb  = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB).astype(np.float32)
-        rgb  = (rgb - 127.5) / 128.0
-        nchw = np.transpose(rgb, (2, 0, 1))
-        return np.expand_dims(nchw, axis=0)
-
-    @staticmethod
-    def _preprocess_normed(face_norm: np.ndarray) -> np.ndarray:
-        rgb  = cv2.cvtColor(face_norm, cv2.COLOR_BGR2RGB) if face_norm.shape[2] == 3 else face_norm
-        nchw = np.transpose(rgb, (2, 0, 1))
-        return np.expand_dims(nchw.astype(np.float32), axis=0)
-
-    def _run_model(self, blob: np.ndarray) -> np.ndarray:
-        if ONNX_AVAILABLE:
-            input_name = self._session.get_inputs()[0].name
-            raw = self._session.run(None, {input_name: blob})[0][0]
-        else:
-            self._session.setInput(blob)
-            raw = self._session.forward()[0]
-        norm = np.linalg.norm(raw)
-        return (raw / norm) if norm > 0 else raw
-
-    def get_embedding_from_raw(self, face_img: np.ndarray):
-        if self._session is None:
-            return None
-        return self._run_model(self._preprocess_raw(face_img))
-
-    def get_embedding_from_normed(self, face_norm: np.ndarray):
-        if self._session is None:
-            return None
-        return self._run_model(self._preprocess_normed(face_norm))
-
-    @staticmethod
-    def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
-        return float(np.dot(a, b))
-
-    def identify_from_t2(self, t2_result: dict) -> dict:
-        t0        = time.perf_counter()
-        embedding = self.get_embedding_from_normed(t2_result["face_crop"])
-        if embedding is None:
-            return _no_match(0.0)
-        best_id, best_name, best_score = self.db.find_best_match(embedding, self.cosine_similarity)
-        latency_ms = (time.perf_counter() - t0) * 1000
-        if best_score >= self.threshold:
-            log.info("MATCH -> %s (%s) | score=%.3f | %.1f ms",
-                     best_id, best_name, best_score, latency_ms)
-            return {
-                "match": True, "student_id": best_id, "name": best_name,
-                "confidence": round(best_score, 4), "latency_ms": round(latency_ms, 2),
-                "direction": t2_result.get("direction"), "bbox": t2_result.get("bbox"),
-            }
-        log.info("NO MATCH | best=%.3f < %.2f | %.1f ms", best_score, self.threshold, latency_ms)
-        result = _no_match(best_score, latency_ms)
-        result["direction"] = t2_result.get("direction")
-        result["bbox"]      = t2_result.get("bbox")
-        return result
-
-    def identify(self, face_img: np.ndarray) -> dict:
-        t0        = time.perf_counter()
-        embedding = self.get_embedding_from_raw(face_img)
-        if embedding is None:
-            return _no_match(0.0)
-        best_id, best_name, best_score = self.db.find_best_match(embedding, self.cosine_similarity)
-        latency_ms = (time.perf_counter() - t0) * 1000
-        if best_score >= self.threshold:
-            log.info("MATCH -> %s (%s) | score=%.3f | %.1f ms",
-                     best_id, best_name, best_score, latency_ms)
-            return {"match": True, "student_id": best_id, "name": best_name,
-                    "confidence": round(best_score, 4), "latency_ms": round(latency_ms, 2)}
-        log.info("NO MATCH | best=%.3f < %.2f | %.1f ms", best_score, self.threshold, latency_ms)
-        return _no_match(best_score, latency_ms)
-
-    def enroll(self, student_id: str, name: str, image: np.ndarray) -> bool:
-        """Single-image enrollment (for pre-captured photos)."""
-        faces = self.detector.detect(image)
-        if not faces:
-            log.error("Enrollment failed: no face detected.")
-            return False
-        crop = self.detector.crop_face(image, faces[0])
-        if not self._is_quality_frame(crop):
-            log.error("Enrollment failed: face crop is too blurry or poorly exposed.")
-            return False
-        embedding = self.get_embedding_from_raw(crop)
-        if embedding is None:
-            return False
-        self.db.add(student_id, name, embedding)
-        return True
-
-    def enroll_from_picamera(self, student_id: str, name: str) -> bool:
-        """
-        Recommended enrollment path for Pi Camera Module 2.
-
-        Opens the camera with the SAME locked ISP settings used during live
-        recognition, so enrollment embeddings and recognition embeddings live
-        in the same colour/brightness space -- the single biggest factor in
-        cosine similarity score consistency.
-
-        Captures ENROLL_CAPTURE_FRAMES quality-gated frames, averages their
-        embeddings, re-normalises, and stores the result.
-        """
+    def enroll_from_camera(self, student_id: str, name: str) -> bool:
         if not PICAMERA2_AVAILABLE:
-            log.error("picamera2 not available -- cannot use enroll_from_picamera.")
+            log.error("picamera2 not available.")
             return False
-
-        cam = _make_picamera2()
-        log.info("Enrollment: collecting %d frames for %s...", ENROLL_CAPTURE_FRAMES, name)
-        good_embeddings = []
-        attempts        = 0
-
+        cam  = open_camera()
+        good = []
+        attempts = 0
+        print(f"Enrolling {name} — look at the camera...", flush=True)
         try:
-            while (len(good_embeddings) < ENROLL_CAPTURE_FRAMES
-                   and attempts < ENROLL_CAPTURE_FRAMES * 3):
+            while len(good) < ENROLL_FRAMES and attempts < ENROLL_FRAMES * 4:
                 attempts += 1
-                frame = _picam_read(cam)
-                faces = self.detector.detect(frame)
-                if not faces:
+                frame = read_frame(cam)
+                aligned, _, _ = self.detector.detect_and_align(frame)
+                if aligned is None:
+                    print(f"  No face (attempt {attempts})", flush=True)
                     continue
-                crop = self.detector.crop_face(frame, faces[0])
-                if not self._is_quality_frame(crop):
-                    log.debug("Enrollment frame %d rejected (quality).", attempts)
+                if not is_good_frame(aligned):
                     continue
-                emb = self.get_embedding_from_raw(crop)
+                emb = self.arcface.embed(aligned)
                 if emb is not None:
-                    good_embeddings.append(emb)
-                    log.info("Good frame %d/%d captured.",
-                             len(good_embeddings), ENROLL_CAPTURE_FRAMES)
-                time.sleep(0.1)   # small gap so frames are not near-duplicates
+                    good.append(emb)
+                    print(f"  Captured {len(good)}/{ENROLL_FRAMES}", flush=True)
+                time.sleep(0.15)
         finally:
             cam.stop()
 
-        if len(good_embeddings) < ENROLL_MIN_GOOD:
-            log.error("Enrollment failed: only %d/%d good frames (need %d).",
-                      len(good_embeddings), ENROLL_CAPTURE_FRAMES, ENROLL_MIN_GOOD)
+        if len(good) < ENROLL_MIN_GOOD:
+            log.error("Enrollment failed — only %d good frames.", len(good))
             return False
-
-        avg_emb  = np.mean(good_embeddings, axis=0)
-        avg_emb /= np.linalg.norm(avg_emb)   # re-normalise after averaging
-        self.db.add(student_id, name, avg_emb)
-        log.info("Enrolled %s from %d frames (averaged embedding).",
-                 name, len(good_embeddings))
+        avg  = np.mean(good, axis=0)
+        avg /= np.linalg.norm(avg)
+        self.db.add(student_id, name, avg)
+        print(f"Enrollment SUCCESS — {name} from {len(good)} frames.")
         return True
 
-    def process_frame(self, frame: np.ndarray) -> tuple:
-        faces   = self.detector.detect(frame)
-        results = []
-        for face in faces:
-            crop = self.detector.crop_face(frame, face)
-            if not self._is_quality_frame(crop):
-                continue
-            result         = self.identify(crop)
-            result["bbox"] = face[:4].astype(int)
-            results.append(result)
-        return results, faces
+
+# ---------------------------------------------------------------------------
+# Drawing
+# ---------------------------------------------------------------------------
+
+def draw_overlay(frame, bbox, label, color):
+    display = frame.copy()
+    if bbox:
+        x, y, w, h = bbox
+        cv2.rectangle(display, (x, y), (x+w, y+h), color, 2)
+    cv2.rectangle(display, (0, 0), (display.shape[1], 36), (0, 0, 0), -1)
+    cv2.putText(display, label, (8, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.65, color, 2)
+    return display
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Live recognition loop
 # ---------------------------------------------------------------------------
 
-def _no_match(score: float, latency_ms: float = 0.0) -> dict:
-    return {"match": False, "student_id": None, "name": None,
-            "confidence": round(score, 4), "latency_ms": round(latency_ms, 2)}
+def run_recognition(recogniser: Recogniser):
+    if not PICAMERA2_AVAILABLE:
+        log.error("picamera2 not available.")
+        return
 
+    cam         = open_camera()
+    vote_buffer = []
+    last_print  = ""
 
-def draw_results(frame: np.ndarray, results: list, confirmed: bool = False) -> np.ndarray:
-    for r in results:
-        x, y, w, h = r["bbox"]
-        if confirmed and r["match"]:
-            color, label = (0, 255, 0),   f"CONFIRMED: {r['name']} ({r['confidence']:.2f})"
-        elif r["match"]:
-            color, label = (0, 165, 255), f"{r['name']} ({r['confidence']:.2f})"
-        else:
-            color, label = (0, 0, 220),   f"NO MATCH ({r['confidence']:.2f})"
-        cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
-        cv2.putText(frame, label, (x, y - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
-    return frame
+    print("Live recognition started. Press Q to quit.\n", flush=True)
+    try:
+        while True:
+            frame = read_frame(cam)
+            aligned, bbox, _ = recogniser.detector.detect_and_align(frame)
+
+            if aligned is None:
+                vote_buffer.clear()
+                display = draw_overlay(frame, None, "No face detected", (0, 255, 255))
+                msg = "No face detected"
+                if msg != last_print:
+                    print(msg, flush=True); last_print = msg
+            else:
+                result = recogniser.identify(aligned)
+                vote_buffer.append(result)
+                if len(vote_buffer) > WINDOW_SIZE:
+                    vote_buffer.pop(0)
+
+                if len(vote_buffer) < WINDOW_SIZE:
+                    label   = f"Scanning... ({len(vote_buffer)}/{WINDOW_SIZE})"
+                    display = draw_overlay(frame, bbox, label, (255, 255, 0))
+                    if label != last_print:
+                        print(label, flush=True); last_print = label
+                else:
+                    matches    = [v for v in vote_buffer if v["match"]]
+                    match_rate = len(matches) / WINDOW_SIZE
+                    avg_score  = sum(v["score"] for v in vote_buffer) / WINDOW_SIZE
+
+                    if match_rate >= MIN_MATCH_RATE and avg_score >= MIN_AVG_SCORE:
+                        ids = [v["student_id"] for v in matches]
+                        if len(set(ids)) == 1:
+                            sid   = matches[0]["student_id"]
+                            name  = matches[0]["name"]
+                            label = f"MATCH: {name} ({avg_score:.3f})"
+                            color = (0, 255, 0)
+                            msg   = (f"CONFIRMED MATCH | {sid} | {name} | "
+                                     f"rate={match_rate:.0%} | avg={avg_score:.4f}")
+                            print(msg, flush=True); last_print = msg
+                            vote_buffer.clear()
+                        else:
+                            label = "NO MATCH | Conflict"
+                            color = (0, 0, 255)
+                            msg   = f"NO MATCH | Conflict | avg={avg_score:.4f}"
+                            if msg != last_print:
+                                print(msg, flush=True); last_print = msg
+                    else:
+                        label = f"NO MATCH ({avg_score:.3f})"
+                        color = (0, 0, 255)
+                        msg   = f"NO MATCH | rate={match_rate:.0%} | avg={avg_score:.4f}"
+                        if msg != last_print:
+                            print(msg, flush=True); last_print = msg
+
+                    display = draw_overlay(frame, bbox, label, color)
+
+            cv2.imshow("Face Recognition — ArcFace", display)
+            if cv2.waitKey(1) & 0xFF == ord("q"):
+                break
+
+    except KeyboardInterrupt:
+        print("\nStopped.", flush=True)
+    finally:
+        cam.stop()
+        cv2.destroyAllWindows()
 
 
 # ---------------------------------------------------------------------------
@@ -481,139 +471,58 @@ def draw_results(frame: np.ndarray, results: list, confirmed: bool = False) -> n
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Face Recognition -- MobileFaceNet INT8 (Pi Camera Module 2)"
+        description="Face Recogniser — ArcFace ResNet100 ONNX + YuNet alignment"
     )
-    parser.add_argument("--enroll",       action="store_true",
-                        help="Enroll from a static image file (--image required)")
-    parser.add_argument("--enroll-picam", action="store_true",
-                        help="Enroll via live Pi Camera Module 2 frames (recommended)")
-    parser.add_argument("--picam",        action="store_true",
-                        help="Run live recognition using Pi Camera Module 2")
-    parser.add_argument("--image",        type=str,
-                        help="Path to image for --enroll or one-shot recognition")
-    parser.add_argument("--name",         type=str)
-    parser.add_argument("--id",           type=str)
-    parser.add_argument("--threshold",    type=float, default=COSINE_THRESHOLD)
+    parser.add_argument("--enroll-picam", action="store_true")
+    parser.add_argument("--enroll",       action="store_true")
+    parser.add_argument("--picam",        action="store_true")
+    parser.add_argument("--list",         action="store_true")
+    parser.add_argument("--delete",       type=str, metavar="STUDENT_ID")
+    parser.add_argument("--rebuild-db",   action="store_true")
+    parser.add_argument("--image",  type=str)
+    parser.add_argument("--name",   type=str)
+    parser.add_argument("--id",     type=str)
     args = parser.parse_args()
 
-    recogniser = FaceRecogniser(threshold=args.threshold)
+    if args.list:
+        db = Database()
+        students = db.list_all()
+        if not students:
+            print("No students enrolled."); return
+        print(f"\n{'ID':<16} {'Name':<20} {'Enrolled At':<35} {'Embeddings'}")
+        print("-" * 80)
+        for s in students:
+            print(f"{s['student_id']:<16} {s['name']:<20} "
+                  f"{s['enrolled_at']:<35} {s['num_embeddings']}")
+        return
 
-    # ------------------------------------------------------------------
-    # Enrollment: live Pi Camera (recommended)
-    # ------------------------------------------------------------------
+    if args.delete:
+        db = Database()
+        print("Deleted." if db.remove(args.delete) else "ID not found.")
+        return
+
+    if args.rebuild_db:
+        db = Database(); db.rebuild(); print("Done."); return
+
+    recogniser = Recogniser()
+
     if args.enroll_picam:
         if not args.name or not args.id:
             parser.error("--enroll-picam requires --name and --id")
-        ok = recogniser.enroll_from_picamera(args.id, args.name)
-        print("Enrollment", "SUCCESS" if ok else "FAILED")
+        recogniser.enroll_from_camera(args.id, args.name)
         return
 
-    # ------------------------------------------------------------------
-    # Enrollment: static image
-    # ------------------------------------------------------------------
     if args.enroll:
         if not args.image or not args.name or not args.id:
             parser.error("--enroll requires --image, --name, and --id")
         img = cv2.imread(args.image)
         if img is None:
-            log.error("Cannot read image: %s", args.image)
-            return
-        ok = recogniser.enroll(args.id, args.name, img)
-        print("Enrollment", "SUCCESS" if ok else "FAILED")
+            log.error("Cannot read image: %s", args.image); return
+        recogniser.enroll_from_image(args.id, args.name, img)
         return
 
-    # ------------------------------------------------------------------
-    # One-shot recognition on a static image
-    # ------------------------------------------------------------------
-    if args.image:
-        img = cv2.imread(args.image)
-        if img is None:
-            log.error("Cannot read image: %s", args.image)
-            return
-        results, _ = recogniser.process_frame(img)
-        if not results:
-            print("No faces detected.")
-        for r in results:
-            status = "MATCH" if r["match"] else "NO MATCH"
-            print(f"{status} | ID: {r['student_id']} | Name: {r['name']} | "
-                  f"Confidence: {r['confidence']:.4f} | Latency: {r['latency_ms']:.1f} ms")
-        cv2.imshow("Recognition Result", draw_results(img, results))
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
-        return
-
-    # ------------------------------------------------------------------
-    # Live recognition: Pi Camera Module 2
-    # ------------------------------------------------------------------
     if args.picam:
-        if not PICAMERA2_AVAILABLE:
-            log.error("picamera2 is not installed. Run: sudo apt install python3-picamera2")
-            return
-
-        cam = _make_picamera2()
-        log.info("Pi Camera live recognition running. Press q to quit.")
-
-        vote_buffer = []
-        confirmed   = False
-
-        try:
-            while True:
-                frame      = _picam_read(cam)
-                results, _ = recogniser.process_frame(frame)
-
-                if not results:
-                    vote_buffer.clear()
-                    confirmed = False
-                    cv2.putText(frame, "No face detected", (10, 30),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
-                    cv2.imshow("Face Recognition -- Pi Cam", frame)
-                    if cv2.waitKey(1) & 0xFF == ord("q"):
-                        break
-                    continue
-
-                vote_buffer.append(results[0])
-                if len(vote_buffer) > WINDOW_SIZE:
-                    vote_buffer.pop(0)
-
-                if len(vote_buffer) < WINDOW_SIZE:
-                    cv2.putText(frame,
-                                f"Checking... ({len(vote_buffer)}/{WINDOW_SIZE})",
-                                (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
-                    cv2.imshow("Face Recognition -- Pi Cam", draw_results(frame, results))
-                    if cv2.waitKey(1) & 0xFF == ord("q"):
-                        break
-                    continue
-
-                matches    = [v for v in vote_buffer if v["match"] and v["student_id"]]
-                match_rate = len(matches) / WINDOW_SIZE
-                avg_score  = sum(v["confidence"] for v in vote_buffer) / WINDOW_SIZE
-
-                if match_rate >= MIN_MATCH_RATE and avg_score >= MIN_AVG_SCORE:
-                    ids = [v["student_id"] for v in matches]
-                    if len(set(ids)) == 1:
-                        sid, name = matches[0]["student_id"], matches[0]["name"]
-                        confirmed = True
-                        log.info("CONFIRMED MATCH -> %s | rate=%.0f%% | avg=%.3f",
-                                 sid, match_rate * 100, avg_score)
-                        print(f"CONFIRMED MATCH | {sid} | {name} | "
-                              f"rate={match_rate:.0%} | avg={avg_score:.4f}")
-                        vote_buffer.clear()
-                    else:
-                        confirmed = False
-                        log.info("CONFLICT -- multiple IDs, rejecting.")
-                        print(f"NO MATCH | CONFLICT -- multiple IDs detected | rate={match_rate:.0%} | avg={avg_score:.4f}")
-                else:
-                    confirmed = False
-                    print(f"NO MATCH | rate={match_rate:.0%} | avg={avg_score:.4f}")
-
-                cv2.imshow("Face Recognition -- Pi Cam",
-                           draw_results(frame, results, confirmed))
-                if cv2.waitKey(1) & 0xFF == ord("q"):
-                    break
-
-        finally:
-            cam.stop()
-            cv2.destroyAllWindows()
+        run_recognition(recogniser)
         return
 
     parser.print_help()
