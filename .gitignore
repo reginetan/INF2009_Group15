@@ -21,4 +21,5 @@ app/images/
 *.pem
 
 # Exports
-exports/
+exports/app/models/arcfaceresnet100-8.onnx
+app/models/mobilefacenet_int8.onnx
