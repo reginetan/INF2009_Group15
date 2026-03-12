@@ -1,10 +1,27 @@
+# === Closed-Loop Attendance Verification System ===
+# Core API
 fastapi==0.115.0
 uvicorn==0.30.0
 python-multipart==0.0.9
 pydantic==2.9.0
-numpy==2.4.2
+
+# Computer Vision & Face Recognition
+numpy<2
 onnxruntime==1.24.2
-opencv-contrib-python-headless==4.13.0.92
-packaging==26.0
+opencv-contrib-python<4.11
+
+# mmWave Sensor (LD2450 UART)
 pyserial==3.5
+
+# Dashboard
+Flask==3.1.1
+Jinja2==3.1.6
+
+# Environment
 python-dotenv==1.0.1
+
+# Utilities
+orjson==3.10.7
+tqdm==4.67.1
+pillow==11.1.0
+imutils==0.5.4
