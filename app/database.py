@@ -83,7 +83,10 @@ def initialize_database():
                     attendance_id INTEGER PRIMARY KEY AUTOINCREMENT,
                     attendance_student_id INTEGER,
                     attendance_exam_id INTEGER,
-                    attendance_status BOOLEAN NOT NULL,
+                    attendance_entry BOOLEAN NOT NULL,
+                    attendance_exit BOOLEAN NOT NULL,
+                    attendance_entry_time DATETIME,
+                    attendance_exit_time DATETIME,
                     FOREIGN KEY (attendance_student_id) REFERENCES students(student_id) ON DELETE CASCADE,
                     FOREIGN KEY (attendance_exam_id) REFERENCES exams(exam_id) ON DELETE CASCADE
                 )
