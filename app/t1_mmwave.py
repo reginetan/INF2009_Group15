@@ -5,7 +5,7 @@
 # mmwave 5v to pi 5v
 from rd03d import RD03D
 import time
-from t2_pipeline import run_t2_pipeline
+#from t2_pipeline import run_t2_pipeline
 
 # Initialize radar with Pi 5 UART settings
 radar = RD03D()  # Uses /dev/ttyAMA0 by default
@@ -21,7 +21,7 @@ while True:
             direction = "ENTRY" if target1.angle < -1 else "EXIT"
             print("Human Presence Detected. Purpose: " + direction + " Distance: " + str(target1.distance))
             
-            result = run_t2_pipeline(direction)
+           # result = run_t2_pipeline(direction)
             if result:
                 print(f"[Radar] T2 pipeline completed | direction={result['direction']} | conf={result['confidence']:.2f}")
         

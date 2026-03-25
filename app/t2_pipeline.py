@@ -2,11 +2,11 @@ import cv2
 import time
 from frame_capture   import init_camera, capture_frame
 from face_detector   import init_yunet, detect_faces, extract_face_crop
-from face_recogniser import FaceRecogniser
+from face_recogniser import Recogniser
 
 cap        = init_camera()
 detector   = init_yunet(input_w=320, input_h=240)
-recogniser = FaceRecogniser()
+recogniser = Recogniser()
 
 def run_t2_pipeline(direction: str):
     t_start = time.time()
