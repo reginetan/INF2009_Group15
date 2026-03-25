@@ -58,10 +58,11 @@ def initialize_database():
                 CREATE TABLE IF NOT EXISTS face_embedding_new (
                     embedding_id INTEGER PRIMARY KEY AUTOINCREMENT,
                     embedding_student_id INTEGER,
-                    embedding_data TEXT NOT NULL,
+                    embedding_data BLOB NOT NULL,
                     FOREIGN KEY (embedding_student_id) REFERENCES students(student_id) ON DELETE CASCADE
                 )
             """)
+            # use embedding_data for .pickle file to store face data 
             cursor.execute("""
                 INSERT OR IGNORE INTO face_embedding_new
                 SELECT * FROM face_embedding
