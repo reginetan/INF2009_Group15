@@ -72,27 +72,61 @@ def initialize_database():
             cursor.execute("ALTER TABLE face_embedding_new RENAME TO face_embedding")
             cursor.execute("PRAGMA foreign_keys = ON")
 
-        # Migrate attendance to include ON DELETE CASCADE if not already present
+        # Migrate attendance to new schema (attendance_status + checked_in_time)
+        # and include ON DELETE CASCADE
         schema = cursor.execute(
             "SELECT sql FROM sqlite_master WHERE type='table' AND name='attendance'"
         ).fetchone()
-        if schema is None or "ON DELETE CASCADE" not in (schema["sql"] or ""):
+        needs_migration = (
+            schema is None
+            or "ON DELETE CASCADE" not in (schema["sql"] or "")
+            or "attendance_entry" in (schema["sql"] or "")
+        )
+        if needs_migration:
             cursor.execute("PRAGMA foreign_keys = OFF")
+            cursor.execute("DROP TABLE IF EXISTS attendance_new")
             cursor.execute("""
-                CREATE TABLE IF NOT EXISTS attendance_new (
+                CREATE TABLE attendance_new (
                     attendance_id INTEGER PRIMARY KEY AUTOINCREMENT,
                     attendance_student_id INTEGER,
                     attendance_exam_id INTEGER,
-                    attendance_entry BOOLEAN NOT NULL,
-                    attendance_exit BOOLEAN NOT NULL,
-                    attendance_entry_time DATETIME,
-                    attendance_exit_time DATETIME,
+                    attendance_status INTEGER NOT NULL DEFAULT 0,
+                    checked_in_time DATETIME,
                     FOREIGN KEY (attendance_student_id) REFERENCES students(student_id) ON DELETE CASCADE,
                     FOREIGN KEY (attendance_exam_id) REFERENCES exams(exam_id) ON DELETE CASCADE
                 )
             """)
             if schema:
-                cursor.execute("INSERT OR IGNORE INTO attendance_new SELECT * FROM attendance")
+                # Migrate data from old table, mapping old columns to new ones
+                old_sql = schema["sql"] or ""
+                if "attendance_entry" in old_sql:
+                    # Old schema: map attendance_entry/exit to attendance_status
+                    cursor.execute("""
+                        INSERT OR IGNORE INTO attendance_new
+                            (attendance_id, attendance_student_id, attendance_exam_id, attendance_status)
+                        SELECT attendance_id, attendance_student_id, attendance_exam_id,
+                            CASE WHEN attendance_exit = 1 THEN 1
+                                 WHEN attendance_entry = 1 THEN 0
+                                 ELSE 0 END
+                        FROM attendance
+                    """)
+                elif "attendance_status" in old_sql:
+                    # Already has new columns, just copy compatible columns
+                    has_time = "checked_in_time" in old_sql
+                    if has_time:
+                        cursor.execute("""
+                            INSERT OR IGNORE INTO attendance_new
+                                (attendance_id, attendance_student_id, attendance_exam_id, attendance_status, checked_in_time)
+                            SELECT attendance_id, attendance_student_id, attendance_exam_id, attendance_status, checked_in_time
+                            FROM attendance
+                        """)
+                    else:
+                        cursor.execute("""
+                            INSERT OR IGNORE INTO attendance_new
+                                (attendance_id, attendance_student_id, attendance_exam_id, attendance_status)
+                            SELECT attendance_id, attendance_student_id, attendance_exam_id, attendance_status
+                            FROM attendance
+                        """)
                 cursor.execute("DROP TABLE attendance")
             cursor.execute("ALTER TABLE attendance_new RENAME TO attendance")
             cursor.execute("PRAGMA foreign_keys = ON")

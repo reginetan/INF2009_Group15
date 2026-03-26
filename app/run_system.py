@@ -49,7 +49,7 @@ API_KEY         = os.environ.get("API_KEY", "changeme")
 EXAM_ID         = int(os.environ.get("EXAM_ID", "1"))
 DETECT_RANGE_MM = int(os.environ.get("DETECT_RANGE", "600"))
 COOLDOWN_SEC    = float(os.environ.get("COOLDOWN", "3.0"))
-POLL_INTERVAL   = float(os.environ.get("POLL_INTERVAL", "0.5"))
+POLL_INTERVAL   = float(os.environ.get("POLL_INTERVAL", "1.5"))
 
 # Face recognition threshold (same as facial_recognition_v2.py)
 STRANGER_THRESHOLD = float(os.environ.get("STRANGER_THRESHOLD", "0.35"))
@@ -330,7 +330,7 @@ def handle_detection(direction: str):
 def run_sensor_loop():
     """Poll LD2450 radar. On detection → determine direction → handle_detection()."""
     print("[T1] Initialising LD2450 mmWave radar...")
-    radar = RD03D(uart_port='/dev/ttyAMA10')
+    radar = RD03D(uart_port='/dev/ttyAMA0')
     radar.set_multi_mode(False)
     print(f"[T1] Radar ready — range: {DETECT_RANGE_MM}mm")
     print()
@@ -339,15 +339,15 @@ def run_sensor_loop():
         #print("Starting while loop...")
         
         
-        #if radar.update():
+        if radar.update():
             #print("Received update from mmvwave")
-            #target = radar.get_target(1)
-            #if target and target.distance < DETECT_RANGE_MM:
-               # direction = "ENTRY" if target.angle < -1 else "EXIT"
-                #print(f"[T1] Human detected | dist={target.distance:.0f}mm | "
-                               #       f"angle={target.angle:.1f}° | → {direction}")
-        direction = "EXIT"
-        handle_detection(direction)
+            target = radar.get_target(1)
+            if target and target.distance < DETECT_RANGE_MM:
+                direction = "ENTRY" if target.angle < 5 else "EXIT"
+                print(f"[T1] Human detected | dist={target.distance:.0f}mm | "
+                                      f"angle={target.angle:.1f}° | → {direction}")
+        #direction = "EXIT"
+                #handle_detection(direction)
 
         #except KeyboardInterrupt:
            # raise

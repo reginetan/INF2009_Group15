@@ -44,13 +44,8 @@ def index():
 @app.route('/api/stats')
 def api_stats():
     """
-    Return summary statistics.
-    {
-        total_students, total_exams,
-        present  (attendance_status = 1),
-        incomplete (attendance_status = 0),
-        absent (students with no attendance record at all)
-    }
+    Return summary statistics based on deduplicated student-exam pairs.
+    Each student × exam pair is counted once with their best status.
     """
     conn = get_db()
     try:
@@ -64,19 +59,27 @@ def api_stats():
             "SELECT COUNT(*) FROM exams"
         ).fetchone()[0]
 
-        present = cur.execute(
-            "SELECT COUNT(*) FROM attendance WHERE attendance_status = 1"
-        ).fetchone()[0]
-
-        incomplete = cur.execute(
-            "SELECT COUNT(*) FROM attendance WHERE attendance_status = 0"
-        ).fetchone()[0]
-
-        students_with_attendance = cur.execute(
-            "SELECT COUNT(DISTINCT attendance_student_id) FROM attendance"
-        ).fetchone()[0]
-
-        absent = total_students - students_with_attendance
+        # Deduplicated counts: one entry per student × exam
+        cur.execute("""
+            SELECT MAX(a.attendance_status) AS status
+            FROM students s
+            CROSS JOIN exams e
+            LEFT JOIN attendance a
+                ON a.attendance_student_id = s.student_id
+                AND a.attendance_exam_id = e.exam_id
+            GROUP BY s.student_id, e.exam_id
+        """)
+        present = 0
+        incomplete = 0
+        absent = 0
+        for row in cur.fetchall():
+            st = row["status"]
+            if st is None:
+                absent += 1
+            elif st == 1:
+                present += 1
+            else:
+                incomplete += 1
 
         return jsonify({
             "total_students": total_students,
@@ -92,11 +95,20 @@ def api_stats():
 @app.route('/api/attendance')
 def api_attendance():
     """
-    Return all attendance records joined with students and exams.
+    Return all student × exam pairs with their attendance status.
+    Deduplicated by student_admin_number per exam.
+    Students without attendance records are shown as absent (status = null).
     """
     conn = get_db()
     try:
         cur = conn.cursor()
+
+        # Check if checked_in_time column exists
+        columns = [col[1] for col in cur.execute("PRAGMA table_info(attendance)").fetchall()]
+        has_time = 'checked_in_time' in columns
+
+        time_col = ", MAX(a.checked_in_time) AS checked_in_time" if has_time else ", NULL AS checked_in_time"
+
         cur.execute("""
             SELECT
                 s.student_admin_number,
@@ -105,12 +117,16 @@ def api_attendance():
                 e.exam_name,
                 e.exam_module_code,
                 e.exam_date,
-                a.attendance_status
-            FROM attendance a
-            JOIN students s ON a.attendance_student_id = s.student_id
-            JOIN exams e    ON a.attendance_exam_id    = e.exam_id
+                MAX(a.attendance_status) AS attendance_status
+                {}
+            FROM students s
+            CROSS JOIN exams e
+            LEFT JOIN attendance a
+                ON a.attendance_student_id = s.student_id
+                AND a.attendance_exam_id = e.exam_id
+            GROUP BY s.student_admin_number, e.exam_id
             ORDER BY e.exam_date DESC, s.student_admin_number ASC
-        """)
+        """.format(time_col))
         rows = [dict(r) for r in cur.fetchall()]
         return jsonify(rows)
     finally:
@@ -137,7 +153,7 @@ def api_exams():
 @app.route('/api/incomplete')
 def api_incomplete():
     """
-    Return only attendance records with attendance_status = 0.
+    Return only student × exam pairs where the best status is incomplete (0).
     """
     conn = get_db()
     try:
@@ -150,11 +166,14 @@ def api_incomplete():
                 e.exam_name,
                 e.exam_module_code,
                 e.exam_date,
-                a.attendance_status
-            FROM attendance a
-            JOIN students s ON a.attendance_student_id = s.student_id
-            JOIN exams e    ON a.attendance_exam_id    = e.exam_id
-            WHERE a.attendance_status = 0
+                MAX(a.attendance_status) AS attendance_status
+            FROM students s
+            CROSS JOIN exams e
+            LEFT JOIN attendance a
+                ON a.attendance_student_id = s.student_id
+                AND a.attendance_exam_id = e.exam_id
+            GROUP BY s.student_admin_number, e.exam_id
+            HAVING attendance_status = 0
             ORDER BY e.exam_date DESC, s.student_admin_number ASC
         """)
         rows = [dict(r) for r in cur.fetchall()]

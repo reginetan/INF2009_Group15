@@ -306,6 +306,11 @@
         color: var(--orange);
       }
 
+      .badge.absent {
+        background: rgba(239, 68, 68, 0.15);
+        color: var(--red);
+      }
+
       /* ── Empty state ──────────────────────────────────────────── */
       .empty {
         text-align: center;
@@ -399,12 +404,13 @@
                 <th>Exam</th>
                 <th>Module</th>
                 <th>Date</th>
+                <th>Time</th>
                 <th>Status</th>
               </tr>
             </thead>
             <tbody id="attendance-body">
               <tr>
-                <td colspan="7" class="empty">Loading…</td>
+                <td colspan="8" class="empty">Loading…</td>
               </tr>
             </tbody>
           </table>
@@ -504,18 +510,30 @@
 
             if (rows.length === 0) {
               tbody.innerHTML =
-                '<tr><td colspan="7" class="empty">No attendance records yet.</td></tr>';
+                '<tr><td colspan="8" class="empty">No attendance records yet.</td></tr>';
               return;
             }
 
             tbody.innerHTML = rows
               .map(function (r) {
-                const statusClass = r.attendance_status
-                  ? "present"
-                  : "incomplete";
-                const statusText = r.attendance_status
-                  ? "PRESENT"
-                  : "INCOMPLETE";
+                let statusClass, statusText;
+                if (r.attendance_status === 1) {
+                  statusClass = "present";
+                  statusText = "PRESENT";
+                } else if (r.attendance_status === 0) {
+                  statusClass = "incomplete";
+                  statusText = "INCOMPLETE";
+                } else {
+                  statusClass = "absent";
+                  statusText = "ABSENT";
+                }
+
+                let timeStr = "—";
+                if (r.checked_in_time) {
+                  const d = new Date(r.checked_in_time);
+                  timeStr = d.toLocaleTimeString("en-GB", { hour12: false });
+                }
+
                 return (
                   "<tr>" +
                   "<td>" +
@@ -535,6 +553,9 @@
                   "</td>" +
                   "<td>" +
                   esc(r.exam_date) +
+                  "</td>" +
+                  "<td>" +
+                  esc(timeStr) +
                   "</td>" +
                   '<td><span class="badge ' +
                   statusClass +

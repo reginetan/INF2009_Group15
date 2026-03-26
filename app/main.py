@@ -416,8 +416,8 @@ def create_attendance(record: AttendanceCreate):
         cursor = conn.cursor()
         try:
             cursor.execute(
-                "INSERT INTO attendance (attendance_student_id, attendance_exam_id, attendance_status) VALUES (?, ?, ?)",
-                (record.attendance_student_id, record.attendance_exam_id, record.attendance_status)
+                "INSERT INTO attendance (attendance_student_id, attendance_exam_id, attendance_status, checked_in_time) VALUES (?, ?, ?, ?)",
+                (record.attendance_student_id, record.attendance_exam_id, record.attendance_status, datetime.now().isoformat())
             )
             attendance_id = cursor.lastrowid
 
