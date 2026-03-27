@@ -20,7 +20,7 @@ class RD03D:
     SINGLE_TARGET_CMD = bytes([0xFD, 0xFC, 0xFB, 0xFA, 0x02, 0x00, 0x80, 0x00, 0x04, 0x03, 0x02, 0x01])
     MULTI_TARGET_CMD  = bytes([0xFD, 0xFC, 0xFB, 0xFA, 0x02, 0x00, 0x90, 0x00, 0x04, 0x03, 0x02, 0x01])
     
-    def __init__(self, uart_port='/dev/ttyAMA10', baudrate=256000, multi_mode=True):
+    def __init__(self, uart_port='/dev/ttyAMA0', baudrate=256000, multi_mode=True):
         self.uart = serial.Serial(uart_port, baudrate, timeout=0.1)
         self.targets = []  # Stores up to 3 targets
         self.buffer = b''  # Buffer to handle split messages
